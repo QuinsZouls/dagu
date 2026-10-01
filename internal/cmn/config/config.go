@@ -131,8 +131,9 @@ const TunnelProviderTailscale = "tailscale"
 
 // LicenseConfig holds the configuration for license activation.
 type LicenseConfig struct {
-	Key      string
-	CloudURL string
+	Key               string
+	CloudURL          string
+	CommunityFeatures []string
 }
 
 // ExecutionMode represents the default execution mode for DAGs.
@@ -1330,6 +1331,12 @@ func validateRemoteNodeAPIBaseURL(rawURL string) error {
 	return nil
 }
 
+// allowedCommunityFeatures mirrors the feature constants defined in
+// internal/license/checker.go ("audit", "rbac", "sso"). The values are
+// duplicated here because internal/license imports this package, so importing
+// it back would create an import cycle.
+var allowedCommunityFeatures = []string{"audit", "rbac", "sso"}
+
 // validateLicense validates the license configuration.
 func (c *Config) validateLicense() error {
 	if c.License.CloudURL != "" {
@@ -1342,6 +1349,13 @@ func (c *Config) validateLicense() error {
 		}
 		if u.Scheme != "https" {
 			return fmt.Errorf("license cloud URL must use HTTPS")
+		}
+	}
+	for _, feature := range c.License.CommunityFeatures {
+		if !slices.Contains(allowedCommunityFeatures, feature) {
+			return fmt.Errorf(
+				"invalid license.community_features value %q: allowed values are %s",
+				feature, strings.Join(allowedCommunityFeatures, ", "))
 		}
 	}
 	return nil

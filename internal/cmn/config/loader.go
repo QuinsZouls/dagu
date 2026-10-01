@@ -1708,6 +1708,10 @@ func (l *ConfigLoader) loadLicenseConfig(cfg *Config, def Definition) {
 	}
 	cfg.License.Key = def.License.Key
 	cfg.License.CloudURL = def.License.CloudURL
+	// parseStringList trims spaces and skips empty parts so both a
+	// comma-separated env value ("rbac, sso") and a YAML list normalize to a
+	// clean []string.
+	cfg.License.CommunityFeatures = parseStringList(def.License.CommunityFeatures)
 }
 
 func (l *ConfigLoader) loadExecutionModeConfig(cfg *Config, _ Definition) {
@@ -2308,6 +2312,7 @@ var envBindings = []envBinding{
 	// License
 	{key: "license.key", env: "LICENSE_KEY"},
 	{key: "license.cloud_url", env: "LICENSE_CLOUD_URL"},
+	{key: "license.community_features", env: "LICENSE_COMMUNITY_FEATURES"},
 
 	// GitSync
 	{key: "git_sync.enabled", env: "GITSYNC_ENABLED"},

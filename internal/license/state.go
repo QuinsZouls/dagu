@@ -4,6 +4,7 @@
 package license
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -15,9 +16,37 @@ type State struct {
 	mu     sync.RWMutex
 	claims *LicenseClaims
 	token  string
+
+	// communityFeatures lists the features enabled while no license is
+	// loaded (claims == nil). It is set once at construction time
+	// (NewManager) and is never mutated by Update/Deactivate.
+	communityFeatures []string
 }
 
 var _ Checker = (*State)(nil)
+
+// newState returns a State seeded with the features configured for community
+// mode. The slice is copied at construction and the features are immutable
+// afterwards: they are set once before Start and are not affected by
+// Update/Deactivate. Deduplication is not applied; input order is preserved.
+func newState(communityFeatures []string) *State {
+	s := &State{}
+	if len(communityFeatures) > 0 {
+		s.communityFeatures = append([]string(nil), communityFeatures...)
+	}
+	return s
+}
+
+// CommunityFeatures returns a copy of the features configured for community
+// mode. It returns an empty slice when none are configured.
+func (s *State) CommunityFeatures() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.communityFeatures) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), s.communityFeatures...)
+}
 
 // Update atomically replaces the license state.
 func (s *State) Update(claims *LicenseClaims, token string) {
@@ -72,12 +101,15 @@ func cloneClaims(c *LicenseClaims) *LicenseClaims {
 
 // IsFeatureEnabled returns true if the feature is available.
 // Features remain active during the grace period after expiry.
+// When no license is loaded (claims == nil), the feature is enabled if it
+// was configured as a community feature (exact string match); with a license
+// loaded, only the licensed claims decide.
 func (s *State) IsFeatureEnabled(feature string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if s.claims == nil {
-		return false
+		return slices.Contains(s.communityFeatures, feature)
 	}
 	if !s.claims.HasFeature(feature) {
 		return false
