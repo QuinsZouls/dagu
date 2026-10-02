@@ -21,5 +21,9 @@ export function useLicense(): LicenseStatus {
 
 export function useHasFeature(feature: string): boolean {
   const license = useLicense();
-  return license.features.includes(feature) && (license.valid || license.gracePeriod);
+  // Server only reports non-empty features in community mode when the operator explicitly enabled them.
+  return (
+    license.features.includes(feature) &&
+    (license.valid || license.gracePeriod || license.community)
+  );
 }
