@@ -35,6 +35,11 @@ var (
 	ErrInvalidTrustedProxyIdentity = errors.New("invalid proxy identity")
 	// ErrTrustedProxyIdentityImmutable is returned when an existing trusted identity is changed.
 	ErrTrustedProxyIdentityImmutable = errors.New("proxy identity is immutable")
+	// ErrLastActiveAdmin is returned when a user mutation would leave the
+	// store without a single active admin (role admin and not disabled),
+	// which would permanently lock user management out of the system
+	// because first-run setup is one-shot.
+	ErrLastActiveAdmin = errors.New("cannot remove the last active admin")
 )
 
 // Common errors for API key store operations.
@@ -149,6 +154,18 @@ type AuthorizationSyncUserStore interface {
 	// SyncAuthorization updates role and, when non-nil, workspace access on an enabled user.
 	// It returns the current user and the authorization state observed under the same lock.
 	SyncAuthorization(ctx context.Context, id string, role Role, workspaceAccess *WorkspaceAccess) (AuthorizationSyncResult, error)
+}
+
+// LastActiveAdminGuardedStore is implemented by user stores that can enforce
+// the "at least one active admin remains" invariant atomically with the write.
+type LastActiveAdminGuardedStore interface {
+	// PatchEnsuringActiveAdmin behaves like Patch but fails with
+	// [ErrLastActiveAdmin] when the patch would remove the last active admin.
+	PatchEnsuringActiveAdmin(ctx context.Context, id string, patch UserPatch) (*User, error)
+
+	// DeleteEnsuringActiveAdmin behaves like Delete but fails with
+	// [ErrLastActiveAdmin] when deleting the last active admin.
+	DeleteEnsuringActiveAdmin(ctx context.Context, id string) error
 }
 
 // APIKeyStore defines the interface for API key persistence operations.

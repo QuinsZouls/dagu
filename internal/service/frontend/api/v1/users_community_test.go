@@ -265,9 +265,14 @@ func TestCommunityMultiUser_SSOFeatureDoesNotEnableUserCRUD(t *testing.T) {
 //   - sole admin demotes itself (self-demote was NOT blocked before M3)
 //   - demote/disable/delete a second admin while the first one still exists
 //   - self-disable keeps its pre-existing message (error precedence)
+//   - self-delete reports the self-delete message, not the last-admin one
 //   - developer targets are unaffected (they were never active admins)
 //   - a service-account API key (synthetic admin principal that matches no
-//     stored user) cannot demote the last stored admin
+//     stored user) cannot demote/delete the last stored admin
+//   - a token issued before a disable/delete stops authenticating (/auth/me
+//     → 401) — live-session invalidation is pinned
+//   - a compound {role: admin, isDisabled: true} patch on the sole active
+//     admin is refused with the last-active-admin message
 func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
 	t.Parallel()
 
@@ -347,14 +352,28 @@ func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
 		Role: &adminRole,
 	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
 
+	// Live-session invalidation: a token issued before the account is
+	// disabled must die with the account.
+	bSessionToken := loginAndGetToken(t, server, "adminb", "adminbpass1")
+
 	isDisabled := true
 	server.Client().Patch("/api/v1/users/"+adminBID, api.UpdateUserRequest{
 		IsDisabled: &isDisabled,
 	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
 
+	// The old token is refused while the account is disabled...
+	server.Client().Get("/api/v1/auth/me").
+		WithBearerToken(bSessionToken).
+		ExpectStatus(http.StatusUnauthorized).Send(t)
+
 	server.Client().Delete("/api/v1/users/" + adminBID).
 		WithBearerToken(adminToken).
 		ExpectStatus(http.StatusNoContent).Send(t)
+
+	// ...and stays refused after the account is gone entirely.
+	server.Client().Get("/api/v1/auth/me").
+		WithBearerToken(bSessionToken).
+		ExpectStatus(http.StatusUnauthorized).Send(t)
 
 	users = listUsers(adminToken)
 	require.Len(t, users.Users, 1)
@@ -368,6 +387,17 @@ func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
 	selfDisableResp.Unmarshal(t, &selfDisableErr)
 	require.Equal(t, api.ErrorCodeForbidden, selfDisableErr.Code)
 	require.Equal(t, "Cannot disable your own account", selfDisableErr.Message)
+
+	// Self-delete precedence: deleting your own id must report the
+	// self-delete message, NOT the last-active-admin message, even though
+	// the target is also the sole active admin.
+	selfDeleteResp := server.Client().Delete("/api/v1/users/" + soleAdminID).
+		WithBearerToken(adminToken).
+		ExpectStatus(http.StatusForbidden).Send(t)
+	var selfDeleteErr api.Error
+	selfDeleteResp.Unmarshal(t, &selfDeleteErr)
+	require.Equal(t, api.ErrorCodeForbidden, selfDeleteErr.Code)
+	require.Equal(t, "Cannot delete your own account", selfDeleteErr.Message)
 
 	// --- 5. Non-admin targets are unaffected. ----------------------------
 	createResp = server.Client().Post("/api/v1/users", api.CreateUserRequest{
@@ -416,6 +446,33 @@ func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
 	// user, so it must not be treated as "the remaining admin".
 	resp = server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
 		Role: &viewerRole,
+	}).WithBearerToken(createdKey.Key).ExpectStatus(http.StatusForbidden).Send(t)
+	expectLastActiveAdmin403(resp)
+
+	// The same principal cannot DELETE the sole stored active admin either,
+	// and the refused delete leaves the user in place.
+	resp = server.Client().Delete("/api/v1/users/" + soleAdminID).
+		WithBearerToken(createdKey.Key).
+		ExpectStatus(http.StatusForbidden).Send(t)
+	expectLastActiveAdmin403(resp)
+
+	users = listUsers(adminToken)
+	require.Len(t, users.Users, 2)
+	foundSoleAdmin := false
+	for _, u := range users.Users {
+		if u.Id == soleAdminID {
+			foundSoleAdmin = true
+			require.Equal(t, api.UserRoleAdmin, u.Role)
+		}
+	}
+	require.True(t, foundSoleAdmin, "sole admin must survive the refused delete")
+
+	// A compound patch that both keeps the role AND disables still loses
+	// active-admin status, so it must be refused as well.
+	disableSelfAsAdmin := true
+	resp = server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
+		Role:       &adminRole,
+		IsDisabled: &disableSelfAsAdmin,
 	}).WithBearerToken(createdKey.Key).ExpectStatus(http.StatusForbidden).Send(t)
 	expectLastActiveAdmin403(resp)
 

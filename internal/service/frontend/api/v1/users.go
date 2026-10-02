@@ -25,51 +25,6 @@ var errLastActiveAdmin = &Error{
 	Message:    "Cannot remove the last active admin",
 }
 
-// preservesLastActiveAdmin reports whether a user mutation keeps the
-// last-active-admin invariant: after the change, at least one user with role
-// admin that is not disabled must remain in the store.
-//
-// When willLoseAdminStatus is false the mutation cannot take admin status
-// away from anyone, so the invariant trivially holds. Otherwise the target is
-// loaded and only constrains the mutation while it is itself an active admin
-// (role admin and not disabled); the invariant then depends on whether some
-// OTHER active admin exists. A target that no longer exists constrains
-// nothing — the subsequent mutation reports its own not-found error.
-//
-// This intentionally evaluates stored users only: an API-key principal is a
-// synthetic user whose ID matches no stored record, so it never counts as a
-// remaining admin.
-func (a *API) preservesLastActiveAdmin(ctx context.Context, targetID string, willLoseAdminStatus bool) (bool, error) {
-	if !willLoseAdminStatus {
-		return true, nil
-	}
-
-	target, err := a.authService.GetUser(ctx, targetID)
-	if err != nil {
-		if errors.Is(err, auth.ErrUserNotFound) {
-			return true, nil
-		}
-		return false, err
-	}
-	if target.Role != auth.RoleAdmin || target.IsDisabled {
-		return true, nil
-	}
-
-	users, err := a.authService.ListUsers(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, u := range users {
-		if u.ID == targetID {
-			continue
-		}
-		if u.Role == auth.RoleAdmin && !u.IsDisabled {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // ListUsers returns a list of all users. Requires admin role.
 func (a *API) ListUsers(ctx context.Context, _ api.ListUsersRequestObject) (api.ListUsersResponseObject, error) {
 	if err := a.requireUserManagement(); err != nil {
@@ -328,18 +283,6 @@ func (a *API) UpdateUser(ctx context.Context, request api.UpdateUserRequestObjec
 		input.IsDisabled = request.Body.IsDisabled
 	}
 
-	// Enforce the last-active-admin invariant before mutating: losing admin
-	// status here means either a role demotion or the account being disabled.
-	willLoseAdminStatus := (input.Role != nil && *input.Role != auth.RoleAdmin) ||
-		(input.IsDisabled != nil && *input.IsDisabled)
-	preserves, err := a.preservesLastActiveAdmin(ctx, request.UserId, willLoseAdminStatus)
-	if err != nil {
-		return nil, err
-	}
-	if !preserves {
-		return nil, errLastActiveAdmin
-	}
-
 	user, err := a.authService.UpdateUser(ctx, request.UserId, input)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
@@ -348,6 +291,9 @@ func (a *API) UpdateUser(ctx context.Context, request api.UpdateUserRequestObjec
 				Message:    "User not found",
 				HTTPStatus: http.StatusNotFound,
 			}
+		}
+		if errors.Is(err, auth.ErrLastActiveAdmin) {
+			return nil, errLastActiveAdmin
 		}
 		if errors.Is(err, auth.ErrUserAlreadyExists) {
 			return nil, &Error{
@@ -422,20 +368,10 @@ func (a *API) DeleteUser(ctx context.Context, request api.DeleteUserRequestObjec
 		}
 	}
 
-	// A delete always removes admin status from the target when it is an
-	// active admin, so the invariant applies unconditionally here.
-	preserves, err := a.preservesLastActiveAdmin(ctx, request.UserId, true)
-	if err != nil {
-		return nil, err
-	}
-	if !preserves {
-		return nil, errLastActiveAdmin
-	}
-
 	// Get target user info before deletion for audit logging
 	targetUser, _ := a.authService.GetUser(ctx, request.UserId)
 
-	err = a.authService.DeleteUser(ctx, request.UserId, currentUser.ID)
+	err := a.authService.DeleteUser(ctx, request.UserId, currentUser.ID)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
 			return nil, &Error{
@@ -450,6 +386,9 @@ func (a *API) DeleteUser(ctx context.Context, request api.DeleteUserRequestObjec
 				Message:    "Cannot delete your own account",
 				HTTPStatus: http.StatusForbidden,
 			}
+		}
+		if errors.Is(err, auth.ErrLastActiveAdmin) {
+			return nil, errLastActiveAdmin
 		}
 		return nil, err
 	}
