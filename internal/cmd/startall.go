@@ -102,11 +102,6 @@ func runStartAll(ctx *Context, _ []string) error {
 		ctx.Config.Paths.DAGsDir = dagsDir
 	}
 
-	// Stop license manager on shutdown
-	if ctx.LicenseManager != nil {
-		defer ctx.LicenseManager.Stop()
-	}
-
 	// Create a context that will be cancelled on interrupt signal.
 	// This must be created BEFORE server initialization so auth provider init can be cancelled.
 	signalCtx, stop := notifyShutdownContext(ctx.Context, syscall.SIGINT, syscall.SIGTERM)
