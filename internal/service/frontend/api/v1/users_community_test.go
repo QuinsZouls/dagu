@@ -123,8 +123,11 @@ func TestCommunityMultiUser_RBACEnabled(t *testing.T) {
 	meResp.Unmarshal(t, &me)
 	require.Equal(t, api.UserRoleViewer, me.User.Role)
 
-	// f. Disable alice: login must be refused (GetUserFromToken rejects
-	// IsDisabled).
+	// f. Disable alice: this step only asserts that a FRESH login is
+	// refused while the account is disabled. The GetUserFromToken claim
+	// (an already-issued token stops authenticating) is pinned separately
+	// by the "live-session invalidation is pinned" vector in
+	// TestCommunityMultiUser_LastAdminGuards (/auth/me with an old token).
 	isDisabled := true
 	server.Client().Patch("/api/v1/users/"+created.User.Id, api.UpdateUserRequest{
 		IsDisabled: &isDisabled,
@@ -273,6 +276,8 @@ func TestCommunityMultiUser_SSOFeatureDoesNotEnableUserCRUD(t *testing.T) {
 //     → 401) — live-session invalidation is pinned
 //   - a compound {role: admin, isDisabled: true} patch on the sole active
 //     admin is refused with the last-active-admin message
+//   - a compound {role: viewer, username: <taken>} patch on the sole active
+//     admin returns 409 (username collision is checked before the invariant)
 func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
 	t.Parallel()
 
@@ -475,6 +480,46 @@ func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
 		IsDisabled: &disableSelfAsAdmin,
 	}).WithBearerToken(createdKey.Key).ExpectStatus(http.StatusForbidden).Send(t)
 	expectLastActiveAdmin403(resp)
+
+	// --- 7. Username collision wins over the last-admin invariant. -------
+	// This pins the precedence introduced in ae867201: the username-collision
+	// check in patchLocked runs BEFORE the last-active-admin invariant, so a
+	// compound patch that both demotes the sole active admin and takes an
+	// already-taken username returns 409 (validation) instead of 403
+	// (invariant). Validation-before-invariant ordering is intentional.
+	takenUsername := "takenshell"
+	createResp = server.Client().Post("/api/v1/users", api.CreateUserRequest{
+		Username: takenUsername,
+		Password: "takenshell1",
+		Role:     api.UserRoleViewer,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusCreated).Send(t)
+
+	var createdV api.UserResponse
+	createResp.Unmarshal(t, &createdV)
+	require.Equal(t, api.UserRoleViewer, createdV.User.Role)
+
+	conflictResp := server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
+		Role:     &viewerRole,
+		Username: &takenUsername,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusConflict).Send(t)
+	var conflictErr api.Error
+	conflictResp.Unmarshal(t, &conflictErr)
+	require.Equal(t, api.ErrorCodeAlreadyExists, conflictErr.Code)
+	require.Equal(t, "Username already exists", conflictErr.Message)
+
+	// The refused patch left the target untouched: the sole admin is still
+	// an active admin.
+	users = listUsers(adminToken)
+	foundSoleAdmin = false
+	for _, u := range users.Users {
+		if u.Id == soleAdminID {
+			foundSoleAdmin = true
+			require.Equal(t, api.UserRoleAdmin, u.Role)
+			require.False(t, u.IsDisabled != nil && *u.IsDisabled,
+				"sole admin must stay enabled after the refused patch")
+		}
+	}
+	require.True(t, foundSoleAdmin, "sole admin must survive the refused patch")
 
 	// Sanity: the stored admin survived every refused mutation.
 	expectMeRole(adminToken, api.UserRoleAdmin)

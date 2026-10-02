@@ -229,7 +229,7 @@ license:
 
 The same list can be set through the environment as a comma-separated value: `DAGU_LICENSE_COMMUNITY_FEATURES=rbac` (e.g. `rbac,sso`). Allowed values: `audit`, `rbac`, `sso` — case-sensitive; anything else is a config validation error.
 
-The opt-in applies only while no license is loaded: a lapsed license keeps its cached claims and disables community features until the license state is cleared (for example, on restart).
+The opt-in applies only while no license is loaded: a lapsed license keeps its cached claims and disables community features until the license state is cleared (by deactivating the license or the license server rejecting it — a restart does NOT clear a persisted expired license).
 
 ### What `rbac` unlocks
 
@@ -746,6 +746,8 @@ When using `builtin` auth, five roles control access:
 | `viewer` | Read-only access |
 
 API keys can be created with independent role assignments. Audit logging tracks all actions.
+
+The Users API never accepts a change that would leave the instance with zero active admins (role demotion, disabling, or deletion of the last active admin is refused with 403), regardless of license mode; see [Community multi-user](#community-multi-user) for related details.
 
 ### TLS and Secrets
 
