@@ -27,12 +27,28 @@ makes *references to those symbols* fail to compile — and nothing more. A
 future upstream rebase that introduces a **new** gate with its **own new
 symbols** (a fresh package, a fresh `if !entitled() { return 403 }`) compiles
 cleanly and would silently re-gate features. Discipline cannot catch that.
-The structural protection is the guard test in `internal/guard`, which scans
-the tree for reintroduction tokens (license package paths, gate symbols,
-`DAGU_LICENSE*`, console/activation URLs), asserts that `config.Config` and
-`config.Definition` have no `License` field, and asserts that the embedded
-OpenAPI spec contains no `/license/` paths. Keep that test green and extend
-its token list when a new upstream gate appears.
+The structural protection is the guard test in `internal/guard/license_test.go`,
+which scans the tree for reintroduction tokens (license package paths, gate
+symbols, `DAGU_LICENSE*`, console/activation URLs), asserts that
+`config.Config` and `config.Definition` have no `License` field, and asserts
+that the embedded OpenAPI spec contains no `/license/` paths, no
+License-named operationIds and no License-named schemas. Two honest caveats
+about that guard:
+
+1. The token list is a **curated heuristic**, not a proof of absence: a gate
+   reintroduced under entirely new vocabulary (`entitlements`,
+   `subscription`, …) is not caught until the list is extended. A green run
+   means "none of the known gates are back", not "none can exist".
+2. The guard carries a small, documented **exception list** of exact
+   file×token pairs with stated reasons — this file (the removal record has
+   to name what it documents) and the decision-D1 legacy-config fixture in
+   `internal/cmn/config/loader_test.go` (it has to name the legacy env vars
+   to prove they are ignored; deletion-proof evidence, not a live feature).
+   Every exception is also asserted to still match a real occurrence, so a
+   stale exception fails the test — exemptions cannot rot in silence.
+
+Keep the guard green and extend its token list when a new upstream gate
+appears.
 
 ## Config and environment compatibility (no deprecation shim)
 
