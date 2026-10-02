@@ -14,11 +14,9 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
 	dagucrypto "github.com/dagucloud/dagu/v2/internal/cmn/crypto"
 	"github.com/dagucloud/dagu/v2/internal/eventstore"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	notificationmodel "github.com/dagucloud/dagu/v2/internal/notification"
 	"github.com/dagucloud/dagu/v2/internal/persis"
 	persisfile "github.com/dagucloud/dagu/v2/internal/persis/file"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,20 +108,6 @@ func TestNotificationChannels_UnavailableWithoutEventStore(t *testing.T) {
 	assert.Contains(t, result.Message, "Notification delivery is unavailable")
 	assert.Contains(t, result.Message, "notification store")
 	assert.Contains(t, result.Message, "notification state")
-}
-
-func TestNotificationChannels_AcceptExistingLicenseWithoutFeatureClaim(t *testing.T) {
-	t.Parallel()
-
-	server := test.SetupServer(t,
-		test.WithServerOptions(frontend.WithLicenseManager(license.NewTestManager())),
-	)
-	resp := server.Client().Get("/api/v1/notification-channels").
-		ExpectStatus(http.StatusOK).Send(t)
-
-	var result api.NotificationChannelListResponse
-	resp.Unmarshal(t, &result)
-	assert.Empty(t, result.Channels)
 }
 
 func TestNotificationRoutes_AvailableWithoutLicense(t *testing.T) {

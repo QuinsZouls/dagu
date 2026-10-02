@@ -11,7 +11,6 @@ import (
 	openapi "github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/eventstore"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	notificationmodel "github.com/dagucloud/dagu/v2/internal/notification"
 	"github.com/dagucloud/dagu/v2/internal/runtime"
 	localapi "github.com/dagucloud/dagu/v2/internal/service/frontend/api/v1"
@@ -116,7 +115,6 @@ func TestUpdateNotificationChannelMapsSaveTimeNotFound(t *testing.T) {
 				return nil, notificationmodel.ErrChannelNotFound
 			},
 		}),
-		localapi.WithLicenseManager(license.NewTestManager()),
 	)
 
 	webhookURL := "https://example.com/webhook"

@@ -10,8 +10,6 @@ import (
 
 	"github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
-	"github.com/dagucloud/dagu/v2/internal/license"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/require"
 )
@@ -233,10 +231,6 @@ func TestAuth_ProxyHeadersAreScopedToProxyLogin(t *testing.T) {
 			cfg.Server.Auth.Proxy.RoleMapping.DefaultWorkspaceAccess = config.TrustedProxyDefaultWorkspaceAccessNone
 			cfg.Server.Metrics = config.MetricsAccessPrivate
 		}),
-		test.WithServerOptions(frontend.WithLicenseManager(license.NewTestManager(
-			license.FeatureRBAC,
-			license.FeatureSSO,
-		))),
 	)
 
 	setupResp := server.Client().Post("/api/v1/auth/setup", api.SetupRequest{
@@ -388,7 +382,6 @@ func setupServer(t *testing.T) test.Server {
 			cfg.Server.Auth.Builtin.Token.Secret = "test-jwt-secret-key-setup"
 			cfg.Server.Auth.Builtin.Token.TTL = time.Hour
 		}),
-		test.WithServerOptions(frontend.WithLicenseManager(defaultTestLicenseManager())),
 	)
 }
 

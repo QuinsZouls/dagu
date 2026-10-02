@@ -14,8 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupAuditTestServer creates a test server with audit enabled but NO license
-// manager so it can be used to verify license gating.
+// setupAuditTestServer creates a test server with audit enabled.
 func setupAuditTestServer(t *testing.T) test.Server {
 	t.Helper()
 	server := test.SetupServer(t, test.WithConfigMutator(func(cfg *config.Config) {
@@ -33,7 +32,7 @@ func setupAuditTestServer(t *testing.T) test.Server {
 
 func TestAudit_RequiresManagerOrAbove(t *testing.T) {
 	t.Parallel()
-	server := setupLicensedAuditTestServer(t)
+	server := setupAuditTestServer(t)
 	adminToken := getWebhookAdminToken(t, server)
 
 	// Create users for each role below manager.
@@ -88,35 +87,37 @@ func TestAudit_RequiresManagerOrAbove(t *testing.T) {
 		ExpectStatus(http.StatusForbidden).Send(t)
 }
 
-// setupLicensedAuditTestServer creates a test server with audit enabled and a
-// license manager that has both "audit" and "rbac" features (via setupWebhookTestServer defaults).
-func setupLicensedAuditTestServer(t *testing.T) test.Server {
-	t.Helper()
-	return setupWebhookTestServer(t, func(cfg *config.Config) {
-		cfg.Server.Audit.Enabled = true
-	})
-}
-
-func TestAudit_RequiresLicense(t *testing.T) {
+func TestAudit_WithoutLicense(t *testing.T) {
 	t.Parallel()
-	// Server with audit enabled but NO license manager — community mode.
+	// Server with audit enabled and no license manager: audit entries are
+	// still recorded and the admin can read them back.
 	server := setupAuditTestServer(t)
 	adminToken := getWebhookAdminToken(t, server)
 
-	server.Client().Get("/api/v1/audit").
+	resp := server.Client().Get("/api/v1/audit").
 		WithBearerToken(adminToken).
-		ExpectStatus(http.StatusForbidden).Send(t)
+		ExpectStatus(http.StatusOK).Send(t)
+
+	var list api.AuditLogsResponse
+	resp.Unmarshal(t, &list)
+	require.NotEmpty(t, list.Entries, "audit entries must be written without a license manager")
+	foundLogin := false
+	for _, entry := range list.Entries {
+		if entry.Action == "login" {
+			foundLogin = true
+		}
+	}
+	require.True(t, foundLogin, "the admin login must be recorded in the audit log")
 }
 
-// TestCommunityMode_ListUsersAndResetPassword verifies that community-mode admins
-// can list users and reset passwords without an RBAC license.
+// TestCommunityMode_ListUsersAndResetPassword verifies that builtin-auth admins
+// can list users and reset passwords.
 func TestCommunityMode_ListUsersAndResetPassword(t *testing.T) {
 	t.Parallel()
-	// Community mode: no license manager.
 	server := setupAuditTestServer(t)
 	adminToken := getWebhookAdminToken(t, server)
 
-	// ListUsers should succeed (no RBAC license required).
+	// ListUsers should succeed.
 	resp := server.Client().Get("/api/v1/users").
 		WithBearerToken(adminToken).
 		ExpectStatus(http.StatusOK).Send(t)
@@ -125,7 +126,7 @@ func TestCommunityMode_ListUsersAndResetPassword(t *testing.T) {
 	resp.Unmarshal(t, &listResult)
 	require.NotEmpty(t, listResult.Users, "should have at least the admin user")
 
-	// ResetUserPassword should succeed (no RBAC license required).
+	// ResetUserPassword should succeed.
 	adminUserID := listResult.Users[0].Id
 	const newAdminPass = "newadminpass1"
 	server.Client().Post("/api/v1/users/"+adminUserID+"/reset-password", api.ResetPasswordRequest{
@@ -142,10 +143,11 @@ func TestCommunityMode_ListUsersAndResetPassword(t *testing.T) {
 	require.NotEmpty(t, newLoginResult.Token)
 	freshToken := newLoginResult.Token
 
-	// CreateUser should fail — RBAC-gated (community mode has no license for user management).
+	// CreateUser should succeed — there is no gate between the admin and
+	// user creation anymore.
 	server.Client().Post("/api/v1/users", api.CreateUserRequest{
-		Username: "should-fail",
+		Username: "created-without-gate",
 		Password: "password123",
 		Role:     api.UserRoleViewer,
-	}).WithBearerToken(freshToken).ExpectStatus(http.StatusForbidden).Send(t)
+	}).WithBearerToken(freshToken).ExpectStatus(http.StatusCreated).Send(t)
 }

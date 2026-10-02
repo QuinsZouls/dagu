@@ -9,27 +9,25 @@ import (
 
 	"github.com/dagucloud/dagu/v2/api/v1"
 	incidentmodel "github.com/dagucloud/dagu/v2/internal/incident"
-	"github.com/dagucloud/dagu/v2/internal/license"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestIncidentManagement_RequireActiveLicense(t *testing.T) {
+// TestIncidentManagement_WithoutLicense proves incident endpoints are
+// reachable without any license manager injected.
+func TestIncidentManagement_WithoutLicense(t *testing.T) {
 	t.Parallel()
 
 	server := test.SetupServer(t)
 	server.Client().Get("/api/v1/incident-providers").
-		ExpectStatus(http.StatusForbidden).Send(t)
+		ExpectStatus(http.StatusOK).Send(t)
 }
 
-func TestIncidentManagement_AcceptsExistingLicenseWithoutFeatureClaim(t *testing.T) {
+func TestIncidentManagement_ProvidersEmptyByDefault(t *testing.T) {
 	t.Parallel()
 
-	server := test.SetupServer(t,
-		test.WithServerOptions(frontend.WithLicenseManager(license.NewTestManager())),
-	)
+	server := test.SetupServer(t)
 	resp := server.Client().Get("/api/v1/incident-providers").
 		ExpectStatus(http.StatusOK).Send(t)
 
@@ -41,9 +39,7 @@ func TestIncidentManagement_AcceptsExistingLicenseWithoutFeatureClaim(t *testing
 func TestIncidentManagement_GlobalWorkspaceAndDAGPolicySets(t *testing.T) {
 	t.Parallel()
 
-	server := test.SetupServer(t,
-		test.WithServerOptions(frontend.WithLicenseManager(license.NewTestManager())),
-	)
+	server := test.SetupServer(t)
 
 	routingKey := "pagerduty-routing-key"
 	providerInput := api.IncidentProviderInput{}
