@@ -246,8 +246,10 @@ Unless listed in `community_features`, SSO login (`sso`) and audit logs (`audit`
 
 > **Security note:** UI visibility follows server-reported features; enforcement is server-side.
 
+This capability ships in binaries built from this fork, not in the official upstream image. With a fork-built image:
+
 ```sh
-docker run --rm -v ~/.dagu:/var/lib/dagu -p 8080:8080 -e DAGU_LICENSE_COMMUNITY_FEATURES=rbac ghcr.io/dagucloud/dagu:latest dagu start-all
+docker run --rm -v ~/.dagu:/var/lib/dagu -p 8080:8080 -e DAGU_LICENSE_COMMUNITY_FEATURES=rbac <image-built-from-this-fork> dagu start-all
 ```
 
 Or add it to the `dagu` service in your compose file:
