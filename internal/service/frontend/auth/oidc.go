@@ -20,7 +20,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger"
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger/tag"
 	"github.com/dagucloud/dagu/v2/internal/cmn/stringutil"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	authservice "github.com/dagucloud/dagu/v2/internal/service/auth"
 	"github.com/dagucloud/dagu/v2/internal/service/oidcprovision"
 	"golang.org/x/oauth2"
@@ -183,12 +182,11 @@ func clearOIDCStateCookies(w http.ResponseWriter, r *http.Request) {
 
 // BuiltinOIDCConfig holds configuration for OIDC under builtin auth mode.
 type BuiltinOIDCConfig struct {
-	Provider       *oidc.Provider
-	Verifier       *oidc.IDTokenVerifier
-	OAuth2Config   *oauth2.Config
-	Provision      *oidcprovision.Service
-	AuthService    *authservice.Service
-	LicenseChecker license.Checker
+	Provider     *oidc.Provider
+	Verifier     *oidc.IDTokenVerifier
+	OAuth2Config *oauth2.Config
+	Provision    *oidcprovision.Service
+	AuthService  *authservice.Service
 	// InitialSetupComplete reports whether builtin administrator bootstrap has completed.
 	InitialSetupComplete func(context.Context) (bool, error)
 	LoginBasePath        string // Base path for login page redirect
@@ -239,11 +237,6 @@ func BuiltinOIDCLoginHandler(cfg *BuiltinOIDCConfig) http.HandlerFunc {
 			return
 		}
 
-		if cfg.LicenseChecker != nil && !cfg.LicenseChecker.IsFeatureEnabled(license.FeatureSSO) {
-			redirectWithError(w, r, cfg.LoginBasePath, "SSO requires an active Dagu license")
-			return
-		}
-
 		state := stringutil.RandomString(16)
 		nonce := stringutil.RandomString(16)
 
@@ -262,11 +255,6 @@ func BuiltinOIDCCallbackHandler(cfg *BuiltinOIDCConfig) http.HandlerFunc {
 		ctx := r.Context()
 
 		if !allowOIDCAfterInitialSetup(w, r, cfg) {
-			return
-		}
-
-		if cfg.LicenseChecker != nil && !cfg.LicenseChecker.IsFeatureEnabled(license.FeatureSSO) {
-			redirectWithError(w, r, cfg.LoginBasePath, "SSO requires an active Dagu license")
 			return
 		}
 

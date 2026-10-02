@@ -42,7 +42,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/eventstore"
 	"github.com/dagucloud/dagu/v2/internal/gitsync"
 	"github.com/dagucloud/dagu/v2/internal/launcher"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	_ "github.com/dagucloud/dagu/v2/internal/llm/allproviders" // Register LLM providers
 	"github.com/dagucloud/dagu/v2/internal/persis"
 	"github.com/dagucloud/dagu/v2/internal/queue"
@@ -125,7 +124,6 @@ type Server struct {
 	tunnelAPIOpts        []apiv1.APIOption
 	tunnelService        *tunnel.Service
 	dagRepository        *persis.DAGRepository
-	licenseManager       *license.Manager
 	remoteNodeResolver   *remotenode.Resolver
 	upgradeStore         upgrade.CacheStore
 	routeRegistrars      []RouteRegistrar
@@ -138,15 +136,6 @@ type ServerOption func(*Server)
 func WithListener(l net.Listener) ServerOption {
 	return func(s *Server) {
 		s.listener = l
-	}
-}
-
-// WithLicenseManager sets the license manager for feature gating.
-func WithLicenseManager(m *license.Manager) ServerOption {
-	return func(s *Server) {
-		if m != nil {
-			s.licenseManager = m
-		}
 	}
 }
 
@@ -291,7 +280,6 @@ type ServerConfig struct {
 	SchedulerStateStore  schedulerstate.Store
 	SchedulerPauseStore  schedulerstate.PauseStore
 	Caches               []fileutil.CacheMetrics
-	LicenseManager       *license.Manager
 	ResourceService      *resource.Service
 	Stores               Stores
 }
@@ -320,9 +308,6 @@ func NewServer(setup ServerConfig, opts ...ServerOption) (*Server, error) {
 		collector.RegisterCache(cache)
 	}
 	mr := telemetry.NewRegistry(collector)
-	if setup.LicenseManager != nil {
-		opts = append(opts, WithLicenseManager(setup.LicenseManager))
-	}
 	if setup.ArtifactRepository != nil {
 		opts = append(opts, WithAPIOption(apiv1.WithArtifactRepository(setup.ArtifactRepository)))
 	}
@@ -496,10 +481,7 @@ func NewServer(setup ServerConfig, opts ...ServerOption) (*Server, error) {
 		}
 	}
 
-	var (
-		remoteNodeResolver *remotenode.Resolver
-		licenseChecker     license.Checker
-	)
+	var remoteNodeResolver *remotenode.Resolver
 	if stores.RemoteNode != nil {
 		remoteNodeResolver = remotenode.NewResolver(cfg.Server.RemoteNodes, stores.RemoteNode)
 		apiOpts = append(apiOpts,
@@ -553,9 +535,6 @@ func NewServer(setup ServerConfig, opts ...ServerOption) (*Server, error) {
 	if stores.Incident != nil {
 		incidentSvc = incidentservice.New(
 			stores.Incident,
-			incidentservice.WithIncidentsEnabled(func() bool {
-				return license.HasActiveLicense(licenseChecker)
-			}),
 			incidentservice.WithPublicURL(cfg.Server.PublicURL),
 		)
 		apiOpts = append(apiOpts, apiv1.WithIncidentService(incidentSvc))
@@ -566,8 +545,6 @@ func NewServer(setup ServerConfig, opts ...ServerOption) (*Server, error) {
 	if upgradeStore != nil {
 		updateInfoChecker = &updateChecker{store: upgradeStore}
 	}
-
-	// Note: SSO/OIDC gating is applied after opts are processed (see below)
 
 	srv := &Server{
 		config:               cfg,
@@ -640,26 +617,6 @@ func NewServer(setup ServerConfig, opts ...ServerOption) (*Server, error) {
 
 	srv.funcsConfig.APIBasePath = srv.config.Server.APIBasePath
 
-	// Populate license checker and manager in funcsConfig after opts
-	if srv.licenseManager != nil {
-		licenseChecker = srv.licenseManager.Checker()
-		srv.funcsConfig.LicenseChecker = licenseChecker
-		srv.funcsConfig.LicenseManager = srv.licenseManager
-		if srv.builtinOIDCCfg != nil {
-			srv.builtinOIDCCfg.LicenseChecker = licenseChecker
-		}
-		if srv.trustedProxyCfg != nil {
-			srv.trustedProxyCfg.LicenseChecker = licenseChecker
-		}
-	}
-
-	if srv.licenseManager != nil && srv.builtinOIDCCfg != nil && !srv.licenseManager.Checker().IsFeatureEnabled(license.FeatureSSO) {
-		logger.Warn(ctx, "SSO (OIDC) is configured but currently unavailable because the active license does not enable it")
-	}
-	if srv.licenseManager != nil && srv.trustedProxyCfg != nil && srv.trustedProxyCfg.Enabled && !srv.licenseManager.Checker().IsFeatureEnabled(license.FeatureSSO) {
-		logger.Warn(ctx, "Proxy authentication is configured but currently unavailable because the active license does not enable it")
-	}
-
 	if srv.auditService != nil {
 		apiOpts = append(apiOpts, apiv1.WithAuditService(srv.auditService))
 	}
@@ -679,10 +636,6 @@ func NewServer(setup ServerConfig, opts ...ServerOption) (*Server, error) {
 		}
 		srv.wakeWikiTopics()
 	}))
-	// Pass license manager to API
-	if srv.licenseManager != nil {
-		apiOpts = append(apiOpts, apiv1.WithLicenseManager(srv.licenseManager))
-	}
 
 	allAPIOptions := append(apiOpts, srv.tunnelAPIOpts...)
 
@@ -1220,11 +1173,7 @@ func (srv *Server) setupTerminalRoute(ctx context.Context, r *chi.Mux, apiV1Base
 		shell = terminal.GetDefaultShell()
 	}
 	srv.terminalManager = terminal.NewManager(ctx, srv.config.Server.Terminal.MaxSessions)
-	var auditChecker license.Checker
-	if srv.licenseManager != nil {
-		auditChecker = srv.licenseManager.Checker()
-	}
-	termHandler := terminal.NewHandler(srv.authService, srv.auditService, auditChecker, srv.terminalManager, shell)
+	termHandler := terminal.NewHandler(srv.authService, srv.auditService, srv.terminalManager, shell)
 	wsPath := path.Join(apiV1BasePath, "terminal/ws")
 	r.Get(wsPath, termHandler.ServeHTTP)
 	logger.Info(ctx, "Terminal WebSocket route configured", slog.String("path", wsPath))

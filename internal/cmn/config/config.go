@@ -40,7 +40,6 @@ type Config struct {
 	Cache           CacheMode
 	GitSync         GitSyncConfig
 	Tunnel          TunnelConfig
-	License         LicenseConfig
 	Notices         []string
 	Warnings        []string
 }
@@ -128,13 +127,6 @@ type TunnelRateLimitConfig struct {
 }
 
 const TunnelProviderTailscale = "tailscale"
-
-// LicenseConfig holds the configuration for license activation.
-type LicenseConfig struct {
-	Key               string
-	CloudURL          string
-	CommunityFeatures []string
-}
 
 // ExecutionMode represents the default execution mode for DAGs.
 type ExecutionMode string
@@ -663,9 +655,6 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.validateRemoteNodes(); err != nil {
-		return err
-	}
-	if err := c.validateLicense(); err != nil {
 		return err
 	}
 	if err := c.validateProc(); err != nil {
@@ -1327,36 +1316,6 @@ func validateRemoteNodeAPIBaseURL(rawURL string) error {
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("api_base_url must not include query parameters or fragments")
-	}
-	return nil
-}
-
-// allowedCommunityFeatures mirrors the feature constants defined in
-// internal/license/checker.go ("audit", "rbac", "sso"). The values are
-// duplicated here because internal/license imports this package, so importing
-// it back would create an import cycle.
-var allowedCommunityFeatures = []string{"audit", "rbac", "sso"}
-
-// validateLicense validates the license configuration.
-func (c *Config) validateLicense() error {
-	if c.License.CloudURL != "" {
-		u, err := url.Parse(c.License.CloudURL)
-		if err != nil {
-			return fmt.Errorf("invalid license cloud URL: %w", err)
-		}
-		if u.Scheme == "" || u.Host == "" {
-			return fmt.Errorf("license cloud URL must include scheme and host (e.g., https://cloud.example.com)")
-		}
-		if u.Scheme != "https" {
-			return fmt.Errorf("license cloud URL must use HTTPS")
-		}
-	}
-	for _, feature := range c.License.CommunityFeatures {
-		if !slices.Contains(allowedCommunityFeatures, feature) {
-			return fmt.Errorf(
-				"invalid license.community_features value %q: allowed values are %s",
-				feature, strings.Join(allowedCommunityFeatures, ", "))
-		}
 	}
 	return nil
 }

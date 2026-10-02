@@ -248,9 +248,6 @@
     },
     "tunnel": {
       "$ref": "#/definitions/TunnelDef"
-    },
-    "license": {
-      "$ref": "#/definitions/LicenseDef"
     }
   },
   "definitions": {
@@ -1609,21 +1606,6 @@
         "block_duration_seconds": {
           "type": "integer",
           "description": "Duration to block after exceeding limit in seconds. Default: 900."
-        }
-      }
-    },
-    "LicenseDef": {
-      "type": "object",
-      "description": "License activation configuration.",
-      "additionalProperties": false,
-      "properties": {
-        "key": {
-          "type": "string",
-          "description": "License key."
-        },
-        "cloud_url": {
-          "type": "string",
-          "description": "License service URL."
         }
       }
     }

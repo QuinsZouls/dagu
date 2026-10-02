@@ -28,7 +28,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/incident"
 	"github.com/dagucloud/dagu/v2/internal/ir"
 	"github.com/dagucloud/dagu/v2/internal/launcher"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	"github.com/dagucloud/dagu/v2/internal/notification"
 	"github.com/dagucloud/dagu/v2/internal/opencodehost"
 	"github.com/dagucloud/dagu/v2/internal/persis"
@@ -125,7 +124,6 @@ type Dependencies struct {
 	IncidentStore        incident.Store
 	IncidentState        chatbridge.StateStore
 	NewIncidentLease     func() chatbridge.Lease
-	LicenseManager       *license.Manager
 }
 
 type startupState struct {
