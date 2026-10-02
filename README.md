@@ -217,6 +217,52 @@ Dagu runs on one machine, on temporary workers your platform creates for each ru
 - **Permission Control:** RBAC and SSO support for team environments, controlling who can view, run, and edit workflows through granular permissions and audit logging.
 - **MCP Server:** Authenticated MCP clients can inspect workflows and runs, maintain Wiki pages, apply changes, and control runs.
 
+## Community multi-user
+
+Upstream Dagu gates user management (create/edit/delete users) behind a Pro license; this fork adds an opt-in `license.community_features` list to enable selected capabilities in community mode without a license. Default: empty ⇒ behavior identical to upstream.
+
+```yaml
+license:
+  community_features:
+    - rbac
+```
+
+The same list can be set through the environment as a comma-separated value: `DAGU_LICENSE_COMMUNITY_FEATURES=rbac` (e.g. `rbac,sso`). Allowed values: `audit`, `rbac`, `sso` — case-sensitive; anything else is a config validation error.
+
+### What `rbac` unlocks
+
+With built-in auth and `rbac` enabled, admins can, through the existing UI (Users page) and the REST API (`POST/PATCH/DELETE /api/v1/users`):
+
+- create users, change roles, enable/disable, and delete accounts;
+- edit per-workspace role grants.
+
+Each user logs in with their own credentials and gets their own JWT session; roles (`admin`/`manager`/`developer`/`operator`/`viewer`) are enforced server-side.
+
+Integrity rule: the server refuses any change that would leave zero active admins (403 "Cannot remove the last active admin"); self-disable and self-delete are already refused.
+
+### What remains Pro
+
+Unless listed in `community_features`, SSO login (`sso`) and audit logs (`audit`) remain Pro. Incident providers and the 2-API-key community cap are NOT affected by this setting.
+
+> **Security note:** UI visibility follows server-reported features; enforcement is server-side.
+
+This capability ships in binaries built from this fork, not in the official upstream image. With a fork-built image:
+
+```sh
+docker run --rm -v ~/.dagu:/var/lib/dagu -p 8080:8080 -e DAGU_LICENSE_COMMUNITY_FEATURES=rbac <image-built-from-this-fork> dagu start-all
+```
+
+Or add it to the `dagu` service in your compose file:
+
+```yaml
+services:
+  dagu:
+    environment:
+      - DAGU_LICENSE_COMMUNITY_FEATURES=rbac
+```
+
+Implementation lives in `internal/license` + `internal/cmn/config` (`license.ManagerConfig.CommunityFeatures`).
+
 ## Architecture
 
 One binary carries every role. Which roles you start, and where, is what the [deployment models](#how-you-run-dagu) differ on.
