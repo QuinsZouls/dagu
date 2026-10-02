@@ -190,7 +190,6 @@ jobs:
         run: |
           helm template dagu ./charts/dagu \
             --namespace dagu \
-            --set-string license.existingSecret=dagu-license \
             --set auth.oidc.enabled=true \
             --set-string auth.oidc.clientId=ci-client \
             --set-string auth.oidc.clientUrl=https://dagu.example.com \
@@ -207,9 +206,7 @@ jobs:
             --set-string 'config.corsAllowedOrigins[0]=https://app.example.com' \
             >/tmp/dagu-optional-render.yaml
 
-          test "$(grep -Fc 'name: DAGU_LICENSE_KEY' /tmp/dagu-optional-render.yaml)" -eq 1
           test "$(grep -Fc 'name: DAGU_AUTH_OIDC_CLIENT_SECRET' /tmp/dagu-optional-render.yaml)" -eq 1
-          grep -Fq 'name: "dagu-license"' /tmp/dagu-optional-render.yaml
           grep -Fq 'name: "dagu-oidc"' /tmp/dagu-optional-render.yaml
           grep -Fq 'cors_allowed_origins: ["https://app.example.com"]' /tmp/dagu-optional-render.yaml
           grep -Fq 'engineering: developer' /tmp/dagu-optional-render.yaml

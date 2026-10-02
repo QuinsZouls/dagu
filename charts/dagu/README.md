@@ -311,34 +311,7 @@ extraEnv:
 
 `config.envPassthrough` matches exact env var names. `config.envPassthroughPrefixes` matches by prefix. Existing built-in defaults such as Kubernetes discovery env vars still apply automatically.
 
-### License
-
-Store the Dagu license key in a Kubernetes Secret in the same namespace as the Helm release:
-
-```bash
-kubectl --namespace dagu create secret generic dagu-license \
-  --from-literal=license-key='<your-license-key>'
-```
-
-Reference that Secret from the chart:
-
-```yaml
-license:
-  existingSecret: dagu-license
-  secretKey: license-key
-```
-
-`license.secretKey` defaults to `license-key`, so an install can also set only the Secret name:
-
-```bash
-helm upgrade --install dagu dagu/dagu \
-  --namespace dagu \
-  --set license.existingSecret=dagu-license
-```
-
-The chart exposes the selected Secret value to the server container as `DAGU_LICENSE_KEY`. Separate scheduler, coordinator, and worker pods in distributed mode do not receive it.
-
-Secret-backed environment variables are read when the UI pod starts. After rotating the license Secret—or the OIDC client Secret described below—restart the UI Deployment so it reads the new value:
+Secret-backed environment variables are read when the UI pod starts. After rotating a referenced Secret—such as the OIDC client Secret described below—restart the UI Deployment so it reads the new value:
 
 ```bash
 kubectl --namespace dagu rollout restart deployment \
@@ -393,7 +366,7 @@ helm upgrade --install dagu dagu/dagu \
 
 #### OIDC
 
-OIDC runs as part of builtin authentication and requires an active license. The license may come from `license.existingSecret`, supported license variables in `extraEnv`, an offline license file, or activation data already persisted on the shared volume. Create the first builtin administrator through the setup page before testing OIDC login.
+OIDC runs as part of builtin authentication. Create the first builtin administrator through the setup page before testing OIDC login.
 
 Store the provider's client secret in the release namespace:
 

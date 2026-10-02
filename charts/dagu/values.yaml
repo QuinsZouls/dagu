@@ -62,14 +62,6 @@ config:
 # when steps need access to runtime env such as proxies or custom CA paths.
 extraEnv: []
 
-# License activation key from an existing Kubernetes Secret.
-# The Secret must exist in the same namespace as the Helm release.
-# This is optional when another supported license env/file or persisted
-# activation source supplies the active license.
-license:
-  existingSecret: ""
-  secretKey: license-key
-
 # Pod security context applied to all Dagu pods.
 # The image entrypoint starts as root, prepares the runtime environment, then
 # drops to PUID/PGID 1000:1000 by default. fsGroup keeps mounted runtime
