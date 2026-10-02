@@ -11,7 +11,6 @@ import { AppBarContext } from '@/contexts/AppBarContext';
 import {
   ConfigContext,
   type Config,
-  type LicenseStatus,
 } from '@/contexts/ConfigContext';
 import UsersPage from '..';
 import { UserFormModal } from '../UserFormModal';
@@ -48,16 +47,6 @@ function makeConfig(): Config {
     updateAvailable: false,
     latestVersion: '',
     permissions: { writeDags: true, runDags: true },
-    license: {
-      valid: true,
-      plan: 'pro',
-      expiry: '2027-01-01T00:00:00Z',
-      features: ['rbac'],
-      gracePeriod: false,
-      community: false,
-      source: 'file',
-      warningCode: '',
-    },
     paths: {
       dagsDir: '',
       logDir: '',
@@ -72,22 +61,6 @@ function makeConfig(): Config {
       gitSyncDir: '',
       auditLogsDir: '',
     },
-  };
-}
-
-// Community mode (no Pro license): the server only lists a feature here when the
-// operator opted in via DAGU_LICENSE_COMMUNITY_FEATURES, so a non-empty
-// features array is the opt-in signal.
-function makeCommunityLicense(features: string[]): LicenseStatus {
-  return {
-    valid: false,
-    plan: '',
-    expiry: '',
-    features,
-    gracePeriod: false,
-    community: true,
-    source: '',
-    warningCode: '',
   };
 }
 
@@ -118,24 +91,16 @@ const appBarValue = {
   workspaces: [{ id: 'payments', name: 'payments' }],
 };
 
-function renderPage(
-  response: components['schemas']['UsersListResponse'],
-  license?: LicenseStatus
-) {
+function renderPage(response: components['schemas']['UsersListResponse']) {
   const fetchMock = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => response,
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  const config = makeConfig();
-  if (license) {
-    config.license = license;
-  }
-
   render(
     <MemoryRouter>
-      <ConfigContext.Provider value={config}>
+      <ConfigContext.Provider value={makeConfig()}>
         <AppBarContext.Provider value={appBarValue}>
           <UsersPage />
         </AppBarContext.Provider>
@@ -176,36 +141,29 @@ describe('UsersPage', () => {
     expect(screen.getByText('Local')).toBeVisible();
   });
 
-  it('honors community-mode rbac when the operator opted in', async () => {
-    renderPage(
-      {
-        users: [makeUser()],
-        managedRoleProviders: [],
-        managedWorkspaceAccessProviders: [],
-      },
-      makeCommunityLicense(['rbac'])
-    );
+  it('shows user management controls unconditionally', async () => {
+    const user = userEvent.setup();
+    renderPage({
+      users: [makeUser()],
+      managedRoleProviders: [],
+      managedWorkspaceAccessProviders: [],
+    });
 
     expect(
       await screen.findByRole('button', { name: 'Add User' })
     ).toBeVisible();
     expect(screen.queryByText(/require a/)).not.toBeInTheDocument();
-  });
 
-  it('keeps rbac disabled in community mode without opt-in', async () => {
-    renderPage(
-      {
-        users: [makeUser()],
-        managedRoleProviders: [],
-        managedWorkspaceAccessProviders: [],
-      },
-      makeCommunityLicense([])
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Actions for oidc-user@example.com',
+      })
     );
-
-    expect(await screen.findByText(/require a/)).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
     expect(
-      screen.queryByRole('button', { name: 'Add User' })
-    ).not.toBeInTheDocument();
+      screen.getByRole('menuitem', { name: 'Disable' })
+    ).toBeVisible();
   });
 
   it('marks only the OIDC role as managed for role-only sync', async () => {

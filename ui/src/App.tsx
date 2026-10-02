@@ -4,15 +4,12 @@
 import React from 'react';
 import {
   BrowserRouter,
-  Link,
   Navigate,
   Route,
   Routes,
   useLocation,
 } from 'react-router-dom';
 import { SWRConfig, mutate as globalMutate } from 'swr';
-
-import { Shield } from 'lucide-react';
 
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { QueryFeedback } from './components/QueryFeedback';
@@ -25,9 +22,7 @@ import {
   Config,
   ConfigContext,
   ConfigUpdateContext,
-  useUpdateConfig,
 } from './contexts/ConfigContext';
-import { useHasFeature, useLicense } from './hooks/useLicense';
 import { SchemaProvider } from './contexts/SchemaContext';
 import { SearchStateProvider } from './contexts/SearchStateContext';
 import {
@@ -37,7 +32,7 @@ import {
 import Layout from './layouts/Layout';
 import fetchJson from './lib/fetchJson';
 import { fetchWithTimeout, shouldRetryQueryError } from './lib/requestTimeout';
-import { useClient, useQuery } from './hooks/api';
+import { useClient } from './hooks/api';
 import { addAuthSessionListener, getAuthToken } from './lib/authSession';
 import {
   getStoredWorkspaceSelection,
@@ -78,7 +73,6 @@ const IncidentProvidersPage = React.lazy(
 );
 const IncidentsPage = React.lazy(() => import('./pages/incidents'));
 const IntegrationsPage = React.lazy(() => import('./pages/integrations'));
-const LicensePage = React.lazy(() => import('./pages/license'));
 const NotificationChannelsPage = React.lazy(
   () => import('./pages/notification-channels')
 );
@@ -116,7 +110,6 @@ const STATIC_PAGE_TITLES = new Set([
   'Incident Connections',
   'Incident Routing',
   'Incidents',
-  'License',
   'Notification Channels',
   'Notification Rules',
   'Notifications',
@@ -237,57 +230,6 @@ function DeveloperElement({
   );
 }
 
-function LicensedRoute({
-  feature,
-  children,
-}: {
-  feature: string;
-  children: React.ReactElement;
-}): React.ReactElement {
-  const hasFeature = useHasFeature(feature);
-  if (hasFeature) return children;
-  return <LicenseRequiredMessage />;
-}
-
-function ActiveLicenseDeveloperElement({
-  children,
-}: {
-  children: React.ReactElement;
-}): React.ReactElement {
-  const license = useLicense();
-  const licensed = !license.community && (license.valid || license.gracePeriod);
-  return (
-    <DeveloperElement>
-      {licensed ? children : <LicenseRequiredMessage />}
-    </DeveloperElement>
-  );
-}
-
-function LicenseRequiredMessage(): React.ReactElement {
-  return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
-      <Shield size={48} className="text-muted-foreground" />
-      <h2 className="text-xl font-semibold">
-        <I18nText text={'License Required'} />
-      </h2>
-      <p className="text-sm text-muted-foreground max-w-md">
-        <I18nText
-          text={
-            'This feature requires an active Dagu license or trial. Visit the'
-          }
-        />{' '}
-        <Link
-          to="/license"
-          className="text-primary underline underline-offset-2"
-        >
-          <I18nText text={'License'} />
-        </Link>{' '}
-        <I18nText text={'page to activate your license.'} />
-      </p>
-    </div>
-  );
-}
-
 type LazyRouteErrorBoundaryProps = {
   children: React.ReactNode;
 };
@@ -350,35 +292,6 @@ function LazyRoutes({
       </React.Suspense>
     </LazyRouteErrorBoundary>
   );
-}
-
-function LicenseStatusSync({
-  enabled,
-  remoteNode,
-}: {
-  enabled: boolean;
-  remoteNode: string;
-}): null {
-  const updateConfig = useUpdateConfig();
-  const { data } = useQuery(
-    '/license/status',
-    enabled ? { params: { query: { remoteNode } } } : null,
-    {
-      keepPreviousData: true,
-      refreshInterval: 60_000,
-      revalidateOnFocus: true,
-      revalidateOnReconnect: true,
-      shouldRetryOnError: false,
-    }
-  );
-
-  React.useEffect(() => {
-    if (data) {
-      updateConfig({ license: data });
-    }
-  }, [data, updateConfig]);
-
-  return null;
 }
 
 function AppInner({ config: initialConfig }: Props): React.ReactElement {
@@ -674,10 +587,6 @@ function AppInner({ config: initialConfig }: Props): React.ReactElement {
       >
         <ConfigContext.Provider value={config}>
           <ConfigUpdateContext.Provider value={updateConfig}>
-            <LicenseStatusSync
-              enabled={canFetchAuthenticatedResources}
-              remoteNode={selectedRemoteNode}
-            />
             <AuthProvider>
               <SearchStateProvider>
                 <SchemaProvider>
@@ -753,25 +662,25 @@ function AppInner({ config: initialConfig }: Props): React.ReactElement {
                                       <Route
                                         path="/incidents"
                                         element={
-                                          <ActiveLicenseDeveloperElement>
+                                          <DeveloperElement>
                                             <IncidentsPage />
-                                          </ActiveLicenseDeveloperElement>
+                                          </DeveloperElement>
                                         }
                                       />
                                       <Route
                                         path="/incident-providers"
                                         element={
-                                          <ActiveLicenseDeveloperElement>
+                                          <DeveloperElement>
                                             <IncidentProvidersPage />
-                                          </ActiveLicenseDeveloperElement>
+                                          </DeveloperElement>
                                         }
                                       />
                                       <Route
                                         path="/incident-policies"
                                         element={
-                                          <ActiveLicenseDeveloperElement>
+                                          <DeveloperElement>
                                             <IncidentPoliciesPage />
-                                          </ActiveLicenseDeveloperElement>
+                                          </DeveloperElement>
                                         }
                                       />
                                       <Route path="/dags/" element={<DAGs />} />
@@ -908,18 +817,8 @@ function AppInner({ config: initialConfig }: Props): React.ReactElement {
                                         path="/audit-logs"
                                         element={
                                           <ManagerElement>
-                                            <LicensedRoute feature="audit">
-                                              <AuditLogsPage />
-                                            </LicensedRoute>
+                                            <AuditLogsPage />
                                           </ManagerElement>
-                                        }
-                                      />
-                                      <Route
-                                        path="/license"
-                                        element={
-                                          <AdminElement>
-                                            <LicensePage />
-                                          </AdminElement>
                                         }
                                       />
                                       <Route

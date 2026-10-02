@@ -21,7 +21,6 @@ const useCanAccessSystemStatusMock = vi.fn();
 const useCanViewEventLogsMock = vi.fn();
 const useCanManageWebhooksMock = vi.fn();
 const useCanViewAuditLogsMock = vi.fn();
-const useHasFeatureMock = vi.fn();
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => useAuthMock(),
@@ -30,10 +29,6 @@ vi.mock('@/contexts/AuthContext', () => ({
   useCanViewEventLogs: () => useCanViewEventLogsMock(),
   useCanManageWebhooks: () => useCanManageWebhooksMock(),
   useCanViewAuditLogs: () => useCanViewAuditLogsMock(),
-}));
-
-vi.mock('@/hooks/useLicense', () => ({
-  useHasFeature: (feature: string) => useHasFeatureMock(feature),
 }));
 
 const config = {
@@ -90,7 +85,6 @@ describe('HomePage', () => {
     useCanViewEventLogsMock.mockReturnValue(true);
     useCanManageWebhooksMock.mockReturnValue(true);
     useCanViewAuditLogsMock.mockReturnValue(true);
-    useHasFeatureMock.mockReturnValue(true);
   });
 
   it('renders grouped navigation cards for the main app areas', () => {
@@ -108,6 +102,20 @@ describe('HomePage', () => {
     expect(
       screen.getByRole('link', { name: /Administration/i })
     ).toHaveAttribute('href', '/administration');
+  });
+
+  it('offers audit logs without any license-conditional label', () => {
+    renderHome();
+
+    expect(
+      screen.getByRole('link', { name: /Audit Logs/i })
+    ).toHaveAttribute('href', '/audit-logs');
+    expect(
+      screen.queryByRole('link', { name: /Audit Logs.*Pro/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /License/i })
+    ).not.toBeInTheDocument();
   });
 
   it('renders Japanese navigation cards', () => {

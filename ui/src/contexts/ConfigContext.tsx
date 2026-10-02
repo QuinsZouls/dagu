@@ -21,19 +21,6 @@ export type PathsConfig = {
 
 export type AuthMode = 'none' | 'basic' | 'builtin';
 
-export type LicenseStatus = {
-  valid: boolean;
-  plan: string;
-  expiry: string;
-  features: string[];
-  gracePeriod: boolean;
-  graceEndsAt?: string;
-  community: boolean;
-  source: string;
-  warningCode: string;
-  error?: string;
-};
-
 export type WorkspaceResponse = components['schemas']['WorkspaceResponse'];
 
 export type Config = {
@@ -61,7 +48,6 @@ export type Config = {
     writeDags: boolean;
     runDags: boolean;
   };
-  license: LicenseStatus;
   paths: PathsConfig;
 };
 

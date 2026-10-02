@@ -39,16 +39,6 @@ const config: Config = {
     writeDags: true,
     runDags: true,
   },
-  license: {
-    valid: true,
-    plan: 'pro',
-    expiry: '',
-    features: [],
-    gracePeriod: false,
-    community: false,
-    source: 'test',
-    warningCode: '',
-  },
   paths: {
     dagsDir: '',
     logDir: '',

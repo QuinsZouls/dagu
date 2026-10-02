@@ -8,17 +8,13 @@ import {
   RotateCcw,
   Save,
   Settings,
-  Shield,
 } from 'lucide-react';
 import { ReactElement, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useSimpleToast } from '@/components/ui/simple-toast';
 import { useClient, useQuery } from '@/hooks/api';
-import { whenEnabled } from '@/hooks/queryUtils';
-import { useLicense } from '@/hooks/useLicense';
 import { useRemoteNode } from '@/contexts/RemoteNodeContext';
 import { IncidentPolicyScope } from '@/api/v1/schema';
 import { IncidentPolicyEditor } from '@/features/incidents/IncidentPolicyEditor';
@@ -35,33 +31,6 @@ type IncidentsTabProps = {
   workspaceName?: string;
 };
 
-function LicenseRequired(): ReactElement {
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 rounded-md border border-border p-8 text-center">
-      <Shield size={40} className="text-muted-foreground" />
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">
-          <I18nText text={'License Required'} />
-        </h2>
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">
-          <I18nText
-            text={
-              'Incident connections and routing require an active Dagu license or trial. Visit the'
-            }
-          />{' '}
-          <Link
-            to="/license"
-            className="text-primary underline underline-offset-2"
-          >
-            <I18nText text={'License'} />
-          </Link>{' '}
-          <I18nText text={'page to activate one.'} />
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function apiErrorMessage(error: unknown, fallback: string): string | null {
   if (!error) return null;
   if (typeof error === 'object' && 'message' in error) {
@@ -75,8 +44,6 @@ export default function IncidentsTab({
   fileName,
   workspaceName,
 }: IncidentsTabProps): ReactElement {
-  const license = useLicense();
-  const licensed = !license.community && (license.valid || license.gracePeriod);
   const remoteNode = useRemoteNode();
   const client = useClient();
   const { showToast } = useSimpleToast();
@@ -99,7 +66,7 @@ export default function IncidentsTab({
     isLoading: providersLoading,
   } = useQuery(
     '/incident-providers',
-    whenEnabled(licensed, { params: { query: { remoteNode } } }),
+    { params: { query: { remoteNode } } },
     {
       revalidateOnFocus: false,
       revalidateOnMount: true,
@@ -112,9 +79,9 @@ export default function IncidentsTab({
     mutate,
   } = useQuery(
     '/dags/{fileName}/incidents',
-    whenEnabled(licensed, {
+    {
       params: { path: { fileName }, query: { remoteNode } },
-    }),
+    },
     {
       revalidateOnFocus: false,
       revalidateOnMount: true,
@@ -146,10 +113,6 @@ export default function IncidentsTab({
       setLocalOverrideStarted(false);
     }
   }, [data, fileName]);
-
-  if (!licensed) {
-    return <LicenseRequired />;
-  }
 
   const refresh = async () => {
     setError(null);

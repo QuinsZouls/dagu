@@ -49,16 +49,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     updateAvailable: false,
     latestVersion: '',
     permissions: { writeDags: false, runDags: false },
-    license: {
-      valid: true,
-      plan: 'enterprise',
-      expiry: '',
-      features: ['sso'],
-      gracePeriod: false,
-      community: false,
-      source: 'test',
-      warningCode: '',
-    },
     paths: {
       dagsDir: '',
       logDir: '',

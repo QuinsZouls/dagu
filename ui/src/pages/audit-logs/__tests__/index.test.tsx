@@ -66,16 +66,6 @@ function makeConfig(): Config {
       writeDags: true,
       runDags: true,
     },
-    license: {
-      valid: true,
-      plan: 'enterprise',
-      expiry: '',
-      features: ['audit'],
-      gracePeriod: false,
-      community: false,
-      source: 'test',
-      warningCode: '',
-    },
     paths: {
       dagsDir: '',
       logDir: '',

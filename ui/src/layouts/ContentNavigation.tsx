@@ -49,7 +49,6 @@ const STATIC_ROUTE_LABELS: Record<string, TranslationKey> = {
   '/terminal': 'navigation.terminal',
   '/event-logs': 'navigation.events',
   '/audit-logs': 'navigation.auditLogs',
-  '/license': 'navigation.license',
   '/git-sync': 'navigation.gitSync',
 };
 
@@ -162,7 +161,6 @@ export function getBreadcrumbItems(
       'remote-nodes',
       'api-keys',
       'terminal',
-      'license',
       'git-sync',
     ].includes(segments[0] ?? '')
   ) {
