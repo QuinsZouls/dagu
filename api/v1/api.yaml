@@ -5477,7 +5477,7 @@ paths:
   /incident-providers:
     get:
       summary: "List incident providers"
-      description: "Returns configured incident providers such as PagerDuty and SolarWinds Incident Response. Incident management requires an active Dagu license or trial. Developer, manager, or admin only."
+      description: "Returns configured incident providers such as PagerDuty and SolarWinds Incident Response. Developer, manager, or admin only."
       operationId: "listIncidentProviders"
       tags:
         - "incidents"
@@ -5491,7 +5491,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IncidentProviderListResponse"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5531,7 +5531,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5565,7 +5565,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IncidentProvider"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5616,7 +5616,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5651,7 +5651,7 @@ paths:
         "204":
           description: "Incident provider deleted"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5697,7 +5697,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TestIncidentProviderResponse"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5732,7 +5732,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IncidentPolicySetListResponse"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5761,7 +5761,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IncidentPolicySet"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5801,7 +5801,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5841,7 +5841,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IncidentPolicySet"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -5892,7 +5892,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -6678,7 +6678,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IncidentPolicySet"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -6725,7 +6725,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -6756,7 +6756,7 @@ paths:
         "204":
           description: "DAG incident routing deleted"
         "403":
-          description: "Forbidden - requires an active Dagu license or trial"
+          description: "Forbidden - insufficient permissions"
           content:
             application/json:
               schema:
@@ -7788,123 +7788,6 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: "Workspace not found"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        default:
-          description: "Unexpected error"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /license/status:
-    get:
-      summary: "Get license status"
-      description: "Returns the current public license status without exposing license credentials."
-      operationId: "getLicenseStatus"
-      tags:
-        - "system"
-      parameters:
-        - $ref: "#/components/parameters/RemoteNode"
-      responses:
-        "200":
-          description: "Current license status"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LicenseStatusResponse"
-        default:
-          description: "Unexpected error"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /license/activate:
-    post:
-      summary: "Activate a license key"
-      description: "Exchanges a license key for a signed JWT token. Admin only."
-      operationId: "activateLicense"
-      tags:
-        - "system"
-      parameters:
-        - $ref: "#/components/parameters/RemoteNode"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - key
-              properties:
-                key:
-                  type: string
-                  description: "License key (e.g. DAGU-XXXX-XXXX-XXXX-XXXX)"
-      responses:
-        "200":
-          description: "Activation successful"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  plan:
-                    type: string
-                  features:
-                    type: array
-                    items:
-                      type: string
-                  expiry:
-                    type: string
-        "400":
-          description: "Invalid key or activation failed"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: "Insufficient permissions"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        default:
-          description: "Unexpected error"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /license/deactivate:
-    post:
-      summary: "Deactivate the current license"
-      description: "Removes local activation data and returns to community mode. Admin only."
-      operationId: "deactivateLicense"
-      tags:
-        - "system"
-      parameters:
-        - $ref: "#/components/parameters/RemoteNode"
-      responses:
-        "200":
-          description: "License deactivated"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        "400":
-          description: "No active license or license configured via env var"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: "Insufficient permissions"
           content:
             application/json:
               schema:
@@ -15673,54 +15556,6 @@ components:
         - token
         - expiresAt
         - user
-
-    LicenseStatusResponse:
-      type: object
-      description: "Public status of the current Dagu license"
-      properties:
-        valid:
-          type: boolean
-          description: "Whether the loaded license token has not expired"
-        plan:
-          type: string
-          description: "License plan name"
-        expiry:
-          type: string
-          description: "License expiration timestamp, or empty for a perpetual or absent license"
-        features:
-          type: array
-          items:
-            type: string
-          description: "Feature claims included in the license"
-        gracePeriod:
-          type: boolean
-          description: "Whether the license is expired but still inside its grace period"
-        graceEndsAt:
-          type: string
-          description: "Grace-period end timestamp, or empty when the license has no expiration"
-        community:
-          type: boolean
-          description: "Whether no license claims are loaded"
-        source:
-          type: string
-          description: "Public license source category"
-        warningCode:
-          type: string
-          description: "Warning code included in the license token"
-        error:
-          type: string
-          description: "User-facing explanation when a configured license is unusable"
-      required:
-        - valid
-        - plan
-        - expiry
-        - features
-        - gracePeriod
-        - graceEndsAt
-        - community
-        - source
-        - warningCode
-        - error
 
     ChangePasswordRequest:
       type: object

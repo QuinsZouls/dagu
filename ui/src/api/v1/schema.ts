@@ -2144,7 +2144,7 @@ export interface paths {
         };
         /**
          * List incident providers
-         * @description Returns configured incident providers such as PagerDuty and SolarWinds Incident Response. Incident management requires an active Dagu license or trial. Developer, manager, or admin only.
+         * @description Returns configured incident providers such as PagerDuty and SolarWinds Incident Response. Developer, manager, or admin only.
          */
         get: operations["listIncidentProviders"];
         put?: never;
@@ -2982,66 +2982,6 @@ export interface paths {
          */
         put: operations["updateWorkspaceBaseConfig"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/license/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get license status
-         * @description Returns the current public license status without exposing license credentials.
-         */
-        get: operations["getLicenseStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/license/activate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Activate a license key
-         * @description Exchanges a license key for a signed JWT token. Admin only.
-         */
-        post: operations["activateLicense"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/license/deactivate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Deactivate the current license
-         * @description Removes local activation data and returns to community mode. Admin only.
-         */
-        post: operations["deactivateLicense"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6310,29 +6250,6 @@ export interface components {
              */
             expiresAt: string;
             user: components["schemas"]["User"];
-        };
-        /** @description Public status of the current Dagu license */
-        LicenseStatusResponse: {
-            /** @description Whether the loaded license token has not expired */
-            valid: boolean;
-            /** @description License plan name */
-            plan: string;
-            /** @description License expiration timestamp, or empty for a perpetual or absent license */
-            expiry: string;
-            /** @description Feature claims included in the license */
-            features: string[];
-            /** @description Whether the license is expired but still inside its grace period */
-            gracePeriod: boolean;
-            /** @description Grace-period end timestamp, or empty when the license has no expiration */
-            graceEndsAt: string;
-            /** @description Whether no license claims are loaded */
-            community: boolean;
-            /** @description Public license source category */
-            source: string;
-            /** @description Warning code included in the license token */
-            warningCode: string;
-            /** @description User-facing explanation when a configured license is unusable */
-            error: string;
         };
         /** @description Request body for changing password */
         ChangePasswordRequest: {
@@ -13762,7 +13679,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentProviderListResponse"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13816,7 +13733,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13859,7 +13776,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentProvider"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13924,7 +13841,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13974,7 +13891,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14035,7 +13952,7 @@ export interface operations {
                     "application/json": components["schemas"]["TestIncidentProviderResponse"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14085,7 +14002,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentPolicySetListResponse"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14126,7 +14043,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentPolicySet"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14180,7 +14097,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14232,7 +14149,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentPolicySet"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14297,7 +14214,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15358,7 +15275,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentPolicySet"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15424,7 +15341,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15475,7 +15392,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Forbidden - requires an active Dagu license or trial */
+            /** @description Forbidden - insufficient permissions */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16620,151 +16537,6 @@ export interface operations {
             };
             /** @description Workspace not found */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Unexpected error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    getLicenseStatus: {
-        parameters: {
-            query?: {
-                /** @description name of the remote node */
-                remoteNode?: components["parameters"]["RemoteNode"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Current license status */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LicenseStatusResponse"];
-                };
-            };
-            /** @description Unexpected error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    activateLicense: {
-        parameters: {
-            query?: {
-                /** @description name of the remote node */
-                remoteNode?: components["parameters"]["RemoteNode"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @description License key (e.g. DAGU-XXXX-XXXX-XXXX-XXXX) */
-                    key: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Activation successful */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        plan?: string;
-                        features?: string[];
-                        expiry?: string;
-                    };
-                };
-            };
-            /** @description Invalid key or activation failed */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Insufficient permissions */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Unexpected error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    deactivateLicense: {
-        parameters: {
-            query?: {
-                /** @description name of the remote node */
-                remoteNode?: components["parameters"]["RemoteNode"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description License deactivated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        message?: string;
-                    };
-                };
-            };
-            /** @description No active license or license configured via env var */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Insufficient permissions */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
