@@ -105,7 +105,7 @@ func licenseCheck() *cobra.Command {
 
 			checker := mgr.Checker()
 			if checker.IsCommunity() {
-				fmt.Println("License: Community mode (no license)")
+				fmt.Println(communityLicenseStatusLine(license.StatusFor(checker).Features))
 				return nil
 			}
 
@@ -140,5 +140,21 @@ func newLicenseManager(ctx *Context, configKey string) (*license.Manager, error)
 		LicenseDir: licenseDir,
 		ConfigKey:  configKey,
 		CloudURL:   ctx.Config.License.CloudURL,
+		// Project the fork's opt-in community features so `license check`
+		// (and every other consumer of this manager) reports them honestly.
+		CommunityFeatures: ctx.Config.License.CommunityFeatures,
 	}, pubKey, store, slog.Default()), nil
+}
+
+// communityLicenseStatusLine renders the one-line status printed by
+// `dagu license check` while running without a license. Community features
+// configured for the fork are listed in parentheses so operators can see what
+// is actually unlocked.
+func communityLicenseStatusLine(features []string) string {
+	if len(features) == 0 {
+		return "License: Community mode (no license)"
+	}
+	return fmt.Sprintf(
+		"License: Community mode (no license; community features: %s)",
+		strings.Join(features, ", "))
 }

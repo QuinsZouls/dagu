@@ -255,3 +255,170 @@ func TestCommunityMultiUser_SSOFeatureDoesNotEnableUserCRUD(t *testing.T) {
 	require.Equal(t, api.ErrorCodeForbidden, errResp.Code)
 	require.Equal(t, "User management requires a Dagu Pro license", errResp.Message)
 }
+
+// TestCommunityMultiUser_LastAdminGuards proves the single M3 invariant:
+// after any user mutation at least one ACTIVE (not disabled) user with role
+// admin must remain in the store. First-run setup is one-shot, so losing the
+// last active admin permanently locks user management out of the UI/API.
+//
+// Covered vectors:
+//   - sole admin demotes itself (self-demote was NOT blocked before M3)
+//   - demote/disable/delete a second admin while the first one still exists
+//   - self-disable keeps its pre-existing message (error precedence)
+//   - developer targets are unaffected (they were never active admins)
+//   - a service-account API key (synthetic admin principal that matches no
+//     stored user) cannot demote the last stored admin
+func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
+	t.Parallel()
+
+	server := communityFeaturesServer(t, license.FeatureRBAC)
+	adminToken := communitySetupAdmin(t, server)
+
+	listUsers := func(token string) api.UsersListResponse {
+		t.Helper()
+		resp := server.Client().Get("/api/v1/users").
+			WithBearerToken(token).
+			ExpectStatus(http.StatusOK).Send(t)
+		var list api.UsersListResponse
+		resp.Unmarshal(t, &list)
+		return list
+	}
+
+	expectLastActiveAdmin403 := func(resp *test.Response) {
+		t.Helper()
+		var errResp api.Error
+		resp.Unmarshal(t, &errResp)
+		require.Equal(t, api.ErrorCodeForbidden, errResp.Code)
+		require.Equal(t, "Cannot remove the last active admin", errResp.Message)
+	}
+
+	expectMeRole := func(token string, want api.UserRole) {
+		t.Helper()
+		resp := server.Client().Get("/api/v1/auth/me").
+			WithBearerToken(token).
+			ExpectStatus(http.StatusOK).Send(t)
+		var me api.UserResponse
+		resp.Unmarshal(t, &me)
+		require.Equal(t, want, me.User.Role)
+	}
+
+	// --- 1. Sole admin demotes itself: must be refused. ------------------
+	users := listUsers(adminToken)
+	require.Len(t, users.Users, 1)
+	require.Equal(t, "admin", users.Users[0].Username)
+	soleAdminID := users.Users[0].Id
+
+	viewerRole := api.UserRoleViewer
+	resp := server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
+		Role: &viewerRole,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusForbidden).Send(t)
+	expectLastActiveAdmin403(resp)
+
+	// The refusal left the account untouched: admin can still log in.
+	expectMeRole(adminToken, api.UserRoleAdmin)
+
+	// --- 2. Second admin exists but is demoted ⇒ self-demote still locked.
+	createResp := server.Client().Post("/api/v1/users", api.CreateUserRequest{
+		Username: "adminb",
+		Password: "adminbpass1",
+		Role:     api.UserRoleAdmin,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusCreated).Send(t)
+
+	var createdB api.UserResponse
+	createResp.Unmarshal(t, &createdB)
+	require.Equal(t, api.UserRoleAdmin, createdB.User.Role)
+	adminBID := createdB.User.Id
+
+	developerRole := api.UserRoleDeveloper
+	server.Client().Patch("/api/v1/users/"+adminBID, api.UpdateUserRequest{
+		Role: &developerRole,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
+
+	// B is a developer now, so A is the only active admin again.
+	resp = server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
+		Role: &viewerRole,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusForbidden).Send(t)
+	expectLastActiveAdmin403(resp)
+	expectMeRole(adminToken, api.UserRoleAdmin)
+
+	// --- 3. Promote B back, then disable/delete B: A remains admin. ------
+	adminRole := api.UserRoleAdmin
+	server.Client().Patch("/api/v1/users/"+adminBID, api.UpdateUserRequest{
+		Role: &adminRole,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
+
+	isDisabled := true
+	server.Client().Patch("/api/v1/users/"+adminBID, api.UpdateUserRequest{
+		IsDisabled: &isDisabled,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
+
+	server.Client().Delete("/api/v1/users/" + adminBID).
+		WithBearerToken(adminToken).
+		ExpectStatus(http.StatusNoContent).Send(t)
+
+	users = listUsers(adminToken)
+	require.Len(t, users.Users, 1)
+	require.Equal(t, "admin", users.Users[0].Username)
+
+	// --- 4. Self-disable keeps the pre-existing message (precedence). ----
+	selfDisableResp := server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
+		IsDisabled: &isDisabled,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusForbidden).Send(t)
+	var selfDisableErr api.Error
+	selfDisableResp.Unmarshal(t, &selfDisableErr)
+	require.Equal(t, api.ErrorCodeForbidden, selfDisableErr.Code)
+	require.Equal(t, "Cannot disable your own account", selfDisableErr.Message)
+
+	// --- 5. Non-admin targets are unaffected. ----------------------------
+	createResp = server.Client().Post("/api/v1/users", api.CreateUserRequest{
+		Username: "devc",
+		Password: "devcpass123",
+		Role:     api.UserRoleDeveloper,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusCreated).Send(t)
+
+	var createdC api.UserResponse
+	createResp.Unmarshal(t, &createdC)
+	require.Equal(t, api.UserRoleDeveloper, createdC.User.Role)
+
+	// role demotion of a never-admin user
+	server.Client().Patch("/api/v1/users/"+createdC.User.Id, api.UpdateUserRequest{
+		Role: &viewerRole,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
+
+	// disable / re-enable of a never-admin user
+	server.Client().Patch("/api/v1/users/"+createdC.User.Id, api.UpdateUserRequest{
+		IsDisabled: &isDisabled,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
+
+	isDisabled = false
+	server.Client().Patch("/api/v1/users/"+createdC.User.Id, api.UpdateUserRequest{
+		IsDisabled: &isDisabled,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusOK).Send(t)
+
+	// --- 6. Service-account API key cannot demote the last stored admin. --
+	keyResp := server.Client().Post("/api/v1/api-keys", api.CreateAPIKeyRequest{
+		Name: "svc-admin",
+		Role: api.UserRoleAdmin,
+		AllowedSurfaces: []api.CreateAPIKeyRequestAllowedSurfaces{
+			api.CreateAPIKeyRequestAllowedSurfacesRestApi,
+			api.CreateAPIKeyRequestAllowedSurfacesMcp,
+		},
+		AttributionClass: api.CreateAPIKeyRequestAttributionClassServiceAccount,
+	}).WithBearerToken(adminToken).ExpectStatus(http.StatusCreated).Send(t)
+
+	var createdKey api.CreateAPIKeyResponse
+	keyResp.Unmarshal(t, &createdKey)
+	require.NotEmpty(t, createdKey.Key)
+	require.True(t, strings.HasPrefix(createdKey.Key, "dagu_"),
+		"API key must carry the dagu_ prefix, got %q", createdKey.Key)
+
+	// The key authenticates as an admin principal whose ID matches no stored
+	// user, so it must not be treated as "the remaining admin".
+	resp = server.Client().Patch("/api/v1/users/"+soleAdminID, api.UpdateUserRequest{
+		Role: &viewerRole,
+	}).WithBearerToken(createdKey.Key).ExpectStatus(http.StatusForbidden).Send(t)
+	expectLastActiveAdmin403(resp)
+
+	// Sanity: the stored admin survived every refused mutation.
+	expectMeRole(adminToken, api.UserRoleAdmin)
+}
