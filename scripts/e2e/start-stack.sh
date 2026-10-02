@@ -6,7 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE_DIR="${DAGU_E2E_STATE_DIR:-$ROOT_DIR/ui/test-results/e2e-stack}"
 BIN_PATH="${DAGU_E2E_BIN:-$ROOT_DIR/.local/bin/dagu-e2e}"
 STACK_FILE="$STATE_DIR/stack.json"
-LICENSE_FILE="$STATE_DIR/license.json"
 PID_DIR="$STATE_DIR/pids"
 SERVICE_LOG_DIR="$STATE_DIR/service-logs"
 
@@ -50,33 +49,6 @@ if [[ ! -x "$BIN_PATH" ]]; then
 fi
 
 mkdir -p "$STATE_DIR" "$PID_DIR" "$SERVICE_LOG_DIR"
-
-license_token=""
-
-ensure_license_env() {
-  if [[ -n "$license_token" ]]; then
-    return 0
-  fi
-
-  if [[ -n "${DAGU_LICENSE:-}" ]]; then
-    license_token="$DAGU_LICENSE"
-    return 0
-  fi
-
-  if [[ -f "$LICENSE_FILE" ]]; then
-    license_token="$(cat "$LICENSE_FILE")"
-    if [[ -n "$license_token" ]]; then
-      return 0
-    fi
-  fi
-
-  license_token="$(node "$ROOT_DIR/scripts/e2e/generate-dev-license.mjs")"
-  if [[ -z "$license_token" ]]; then
-    echo "warning: no license generated (DAGU_LICENSE_PRIVKEY_B64 not set)" >&2
-    return 0
-  fi
-  printf '%s' "$license_token" >"$LICENSE_FILE"
-}
 
 pid_file_for() {
   printf '%s/%s.pid\n' "$PID_DIR" "$1"
@@ -266,11 +238,8 @@ start_service() {
   log_file="$SERVICE_LOG_DIR/${service_name}.log"
   pid_file="$(pid_file_for "$service_name")"
 
-  ensure_license_env
-
   (
     cd "$ROOT_DIR"
-    export DAGU_LICENSE="$license_token"
     nohup "$BIN_PATH" "$command_name" --config "$config_file" >>"$log_file" 2>&1 &
     printf '%s\n' "$!" >"$pid_file"
   )
@@ -441,7 +410,6 @@ prepare_stack() {
 
   cp "$ROOT_DIR/ui/e2e/fixtures/dags/e2e-distributed-queue.yaml" "$LOCAL_DAGS_DIR/"
 
-  ensure_license_env
   write_local_config "$WORKER_ONE_ID" "$LOCAL_CONFIG_FILE"
   write_local_config "$WORKER_ONE_ID" "$WORKER_ONE_CONFIG_FILE"
   write_local_config "$WORKER_TWO_ID" "$WORKER_TWO_CONFIG_FILE"
