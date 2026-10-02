@@ -217,6 +217,54 @@ Dagu runs on one machine, on temporary workers your platform creates for each ru
 - **Permission Control:** RBAC and SSO support for team environments, controlling who can view, run, and edit workflows through granular permissions and audit logging.
 - **MCP Server:** Authenticated MCP clients can inspect workflows and runs, maintain Wiki pages, apply changes, and control runs.
 
+## Community multi-user
+
+Upstream Dagu gates user management (create/edit/delete users) behind a Pro license; this fork adds an opt-in `license.community_features` list to enable selected capabilities in community mode without a license. Default: empty ⇒ behavior identical to upstream.
+
+```yaml
+license:
+  community_features:
+    - rbac
+```
+
+The same list can be set through the environment as a comma-separated value: `DAGU_LICENSE_COMMUNITY_FEATURES=rbac` (e.g. `rbac,sso`). Allowed values: `audit`, `rbac`, `sso` — case-sensitive; anything else is a config validation error.
+
+The opt-in applies only while no license is loaded: a lapsed license keeps its cached claims and disables community features until the license state is cleared (by deactivating the license or the license server rejecting it — a restart does NOT clear a persisted expired license).
+
+### What `rbac` unlocks
+
+With built-in auth and `rbac` enabled, admins can, through the existing UI (Users page) and the REST API (`POST/PATCH/DELETE /api/v1/users`):
+
+- create users, change roles, enable/disable, and delete accounts;
+- edit per-workspace role grants.
+
+Each user logs in with their own credentials and gets their own JWT session; roles (`admin`/`manager`/`developer`/`operator`/`viewer`) are enforced server-side.
+
+Integrity rule: the Users API refuses any change that would leave zero active admins (403 "Cannot remove the last active admin"), and self-disable and self-delete are refused. This rule is enforced atomically in the user store and applies in every license mode (community or Pro). It does not cover role synchronization performed by `sso` provisioning (OIDC / trusted-proxy sign-in), which updates roles outside the Users API — keep at least one locally managed admin account.
+
+### What remains Pro
+
+Unless listed in `community_features`, SSO login (`sso`) and audit logs (`audit`) remain Pro. Incident providers and the 2-API-key community cap are NOT affected by this setting. Note that enabling `audit` unlocks the whole audit surface (audit-log writes such as failed-login entries, and the terminal audit path), not only the audit-logs page.
+
+> **Security note:** UI visibility follows server-reported features; enforcement is server-side.
+
+This capability ships in binaries built from this fork, not in the official upstream image. With a fork-built image:
+
+```sh
+docker run --rm -v ~/.dagu:/var/lib/dagu -p 8080:8080 -e DAGU_LICENSE_COMMUNITY_FEATURES=rbac <image-built-from-this-fork> dagu start-all
+```
+
+Or add it to the `dagu` service in your compose file:
+
+```yaml
+services:
+  dagu:
+    environment:
+      - DAGU_LICENSE_COMMUNITY_FEATURES=rbac
+```
+
+Implementation lives in `internal/license` + `internal/cmn/config` (`license.ManagerConfig.CommunityFeatures`).
+
 ## Architecture
 
 One binary carries every role. Which roles you start, and where, is what the [deployment models](#how-you-run-dagu) differ on.
@@ -698,6 +746,8 @@ When using `builtin` auth, five roles control access:
 | `viewer` | Read-only access |
 
 API keys can be created with independent role assignments. Audit logging tracks all actions.
+
+The Users API never accepts a change that would leave the instance with zero active admins (role demotion, disabling, or deletion of the last active admin is refused with 403), regardless of license mode; see [Community multi-user](#community-multi-user) for related details.
 
 ### TLS and Secrets
 

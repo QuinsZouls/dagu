@@ -2611,6 +2611,47 @@ tunnel:
 	})
 }
 
+func TestLoad_LicenseCommunityFeatures(t *testing.T) {
+	// Subtests use t.Setenv so the parent must not call t.Parallel.
+
+	t.Run("FromEnvCommaSeparated", func(t *testing.T) {
+		cfg := loadWithEnv(t, "# empty", map[string]string{
+			"DAGU_LICENSE_COMMUNITY_FEATURES": "rbac, sso",
+		})
+		assert.Equal(t, []string{"rbac", "sso"}, cfg.License.CommunityFeatures)
+	})
+
+	t.Run("FromEnvTrimsSpacesAndSkipsEmptyParts", func(t *testing.T) {
+		cfg := loadWithEnv(t, "# empty", map[string]string{
+			"DAGU_LICENSE_COMMUNITY_FEATURES": " rbac ,, sso ,",
+		})
+		assert.Equal(t, []string{"rbac", "sso"}, cfg.License.CommunityFeatures)
+	})
+
+	t.Run("FromYAMLList", func(t *testing.T) {
+		cfg := loadFromYAML(t, `
+license:
+  community_features:
+    - rbac
+    - sso
+`)
+		assert.Equal(t, []string{"rbac", "sso"}, cfg.License.CommunityFeatures)
+	})
+
+	t.Run("FromYAMLCommaSeparatedString", func(t *testing.T) {
+		cfg := loadFromYAML(t, `
+license:
+  community_features: "audit, rbac"
+`)
+		assert.Equal(t, []string{"audit", "rbac"}, cfg.License.CommunityFeatures)
+	})
+
+	t.Run("NotSet", func(t *testing.T) {
+		cfg := loadFromYAML(t, "# empty")
+		assert.Empty(t, cfg.License.CommunityFeatures)
+	})
+}
+
 func TestLoad_DefaultExecutionMode(t *testing.T) {
 	t.Run("DefaultIsLocal", func(t *testing.T) {
 		cfg := loadFromYAML(t, "# empty")

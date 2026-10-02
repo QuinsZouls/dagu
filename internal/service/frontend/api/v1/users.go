@@ -16,6 +16,15 @@ import (
 	authservice "github.com/dagucloud/dagu/v2/internal/service/auth"
 )
 
+// errLastActiveAdmin is returned when a user mutation would leave the store
+// without a single active admin, which would permanently lock user management
+// out of the system (first-run setup is one-shot).
+var errLastActiveAdmin = &Error{
+	HTTPStatus: http.StatusForbidden,
+	Code:       api.ErrorCodeForbidden,
+	Message:    "Cannot remove the last active admin",
+}
+
 // ListUsers returns a list of all users. Requires admin role.
 func (a *API) ListUsers(ctx context.Context, _ api.ListUsersRequestObject) (api.ListUsersResponseObject, error) {
 	if err := a.requireUserManagement(); err != nil {
@@ -283,6 +292,9 @@ func (a *API) UpdateUser(ctx context.Context, request api.UpdateUserRequestObjec
 				HTTPStatus: http.StatusNotFound,
 			}
 		}
+		if errors.Is(err, auth.ErrLastActiveAdmin) {
+			return nil, errLastActiveAdmin
+		}
 		if errors.Is(err, auth.ErrUserAlreadyExists) {
 			return nil, &Error{
 				Code:       api.ErrorCodeAlreadyExists,
@@ -345,6 +357,17 @@ func (a *API) DeleteUser(ctx context.Context, request api.DeleteUserRequestObjec
 		}
 	}
 
+	// Error precedence is unchanged: self-deletion keeps the original
+	// "Cannot delete your own account" message (ErrCannotDeleteSelf) and is
+	// therefore checked before the last-active-admin invariant.
+	if request.UserId == currentUser.ID {
+		return nil, &Error{
+			Code:       api.ErrorCodeForbidden,
+			Message:    "Cannot delete your own account",
+			HTTPStatus: http.StatusForbidden,
+		}
+	}
+
 	// Get target user info before deletion for audit logging
 	targetUser, _ := a.authService.GetUser(ctx, request.UserId)
 
@@ -363,6 +386,9 @@ func (a *API) DeleteUser(ctx context.Context, request api.DeleteUserRequestObjec
 				Message:    "Cannot delete your own account",
 				HTTPStatus: http.StatusForbidden,
 			}
+		}
+		if errors.Is(err, auth.ErrLastActiveAdmin) {
+			return nil, errLastActiveAdmin
 		}
 		return nil, err
 	}

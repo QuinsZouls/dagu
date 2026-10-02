@@ -346,9 +346,10 @@ func NewContext(cmd *cobra.Command, flags []commandLineFlag) (*Context, error) {
 		licenseDir := file.LicenseDir(cfg)
 		licStore := file.NewLicenseStore(ctx, backend.Collection(persis.CollectionLicense))
 		licMgr = license.NewManager(license.ManagerConfig{
-			LicenseDir: licenseDir,
-			ConfigKey:  cfg.License.Key,
-			CloudURL:   cfg.License.CloudURL,
+			LicenseDir:        licenseDir,
+			ConfigKey:         cfg.License.Key,
+			CloudURL:          cfg.License.CloudURL,
+			CommunityFeatures: cfg.License.CommunityFeatures,
 		}, pubKey, licStore, slog.Default())
 		if err := licMgr.Start(ctx); err != nil {
 			logger.Warn(ctx, "License manager initialization failed", tag.Error(err))

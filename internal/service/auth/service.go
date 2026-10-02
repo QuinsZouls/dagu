@@ -406,6 +406,12 @@ func (s *Service) UpdateUser(ctx context.Context, id string, input UpdateUserInp
 		patch.IsDisabled = &disabled
 	}
 
+	// When the store supports it, enforce the last-active-admin invariant
+	// atomically with the write instead of relying on a separate pre-check
+	// (which would be a TOCTOU race between concurrent demotions).
+	if gs, ok := s.store.(auth.LastActiveAdminGuardedStore); ok {
+		return gs.PatchEnsuringActiveAdmin(ctx, id, patch)
+	}
 	return s.store.Patch(ctx, id, patch)
 }
 
@@ -414,6 +420,11 @@ func (s *Service) UpdateUser(ctx context.Context, id string, input UpdateUserInp
 func (s *Service) DeleteUser(ctx context.Context, id string, currentUserID string) error {
 	if id == currentUserID {
 		return ErrCannotDeleteSelf
+	}
+	// Same pattern as UpdateUser: prefer the store's atomic guard so the
+	// last-active-admin invariant cannot be raced by a concurrent mutation.
+	if gs, ok := s.store.(auth.LastActiveAdminGuardedStore); ok {
+		return gs.DeleteEnsuringActiveAdmin(ctx, id)
 	}
 	return s.store.Delete(ctx, id)
 }

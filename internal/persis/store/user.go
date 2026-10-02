@@ -17,6 +17,7 @@ import (
 
 var _ auth.UserStore = (*UserStore)(nil)
 var _ auth.AuthorizationSyncUserStore = (*UserStore)(nil)
+var _ auth.LastActiveAdminGuardedStore = (*UserStore)(nil)
 
 // UserStore implements [auth.UserStore].
 // Secondary indices are rebuilt from the collection on startup and kept in sync under mu.
@@ -301,6 +302,21 @@ func (s *UserStore) Update(ctx context.Context, user *auth.User) error {
 
 // Patch atomically applies selected account fields.
 func (s *UserStore) Patch(ctx context.Context, id string, patch auth.UserPatch) (*auth.User, error) {
+	return s.patchLocked(ctx, id, patch, false)
+}
+
+// PatchEnsuringActiveAdmin behaves like [UserStore.Patch] but additionally
+// enforces the last-active-admin invariant atomically with the write: it
+// fails with [auth.ErrLastActiveAdmin] when the patch would remove admin
+// status (role demotion or disabling) from the last active admin.
+func (s *UserStore) PatchEnsuringActiveAdmin(ctx context.Context, id string, patch auth.UserPatch) (*auth.User, error) {
+	return s.patchLocked(ctx, id, patch, true)
+}
+
+// patchLocked applies the patch under s.mu. When ensureActiveAdmin is true
+// the "at least one active admin remains" invariant is checked inside the
+// same critical section, before the write.
+func (s *UserStore) patchLocked(ctx context.Context, id string, patch auth.UserPatch, ensureActiveAdmin bool) (*auth.User, error) {
 	if id == "" {
 		return nil, auth.ErrInvalidUserID
 	}
@@ -324,6 +340,11 @@ func (s *UserStore) Patch(ctx context.Context, id string, patch auth.UserPatch) 
 	}
 
 	oldUsername := stored.Username
+	// Snapshot admin status BEFORE applying the patch: the invariant only
+	// constrains mutations that take active-admin status AWAY from a target
+	// that is currently an active admin (matches the former handler-level
+	// pre-check semantics: a non-active-admin target constrains nothing).
+	wasActiveAdmin := isActiveAdmin(stored.Role, stored.IsDisabled)
 	if patch.Username != nil {
 		if *patch.Username == "" {
 			return nil, auth.ErrInvalidUsername
@@ -360,6 +381,23 @@ func (s *UserStore) Patch(ctx context.Context, id string, patch auth.UserPatch) 
 		stored.IsDisabled = *patch.IsDisabled
 	}
 	stored.UpdatedAt = now
+
+	// Enforce the last-active-admin invariant inside the write lock: if the
+	// patch takes admin status away from a currently active admin (role
+	// demotion or disabling) and the target would no longer be an active
+	// admin, another active admin must still exist. Checked before the
+	// write so a refusal leaves the record untouched.
+	if ensureActiveAdmin && wasActiveAdmin &&
+		(patch.Role != nil || patch.IsDisabled != nil) &&
+		!isActiveAdmin(stored.Role, stored.IsDisabled) {
+		ok, err := s.hasAnotherActiveAdminLocked(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, auth.ErrLastActiveAdmin
+		}
+	}
 
 	data, err := persis.Encode(&stored)
 	if err != nil {
@@ -450,6 +488,20 @@ func (s *UserStore) SyncAuthorization(
 // Delete removes a user by their ID.
 // Returns [auth.ErrUserNotFound] if the user does not exist.
 func (s *UserStore) Delete(ctx context.Context, id string) error {
+	return s.deleteLocked(ctx, id, false)
+}
+
+// DeleteEnsuringActiveAdmin behaves like [UserStore.Delete] but additionally
+// enforces the last-active-admin invariant atomically with the write: it
+// fails with [auth.ErrLastActiveAdmin] when deleting the last active admin.
+func (s *UserStore) DeleteEnsuringActiveAdmin(ctx context.Context, id string) error {
+	return s.deleteLocked(ctx, id, true)
+}
+
+// deleteLocked removes the user under s.mu. When ensureActiveAdmin is true
+// the "at least one active admin remains" invariant is checked inside the
+// same critical section, before the delete.
+func (s *UserStore) deleteLocked(ctx context.Context, id string, ensureActiveAdmin bool) error {
 	if id == "" {
 		return auth.ErrInvalidUserID
 	}
@@ -467,6 +519,19 @@ func (s *UserStore) Delete(ctx context.Context, id string) error {
 	var stored auth.UserForStorage
 	if err := persis.Decode(rec, &stored); err != nil {
 		return fmt.Errorf("user store: decode for delete: %w", err)
+	}
+
+	// Enforce the last-active-admin invariant inside the write lock:
+	// deleting an active admin is only allowed while another active admin
+	// remains. Checked before the delete so a refusal keeps the user.
+	if ensureActiveAdmin && isActiveAdmin(stored.Role, stored.IsDisabled) {
+		ok, err := s.hasAnotherActiveAdminLocked(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return auth.ErrLastActiveAdmin
+		}
 	}
 
 	if err := s.col.Delete(ctx, id); err != nil {
@@ -491,6 +556,39 @@ func (s *UserStore) Count(_ context.Context) (int64, error) {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+// isActiveAdmin reports whether a user with the given role and disabled flag
+// counts as an active admin for the last-active-admin invariant.
+func isActiveAdmin(role auth.Role, isDisabled bool) bool {
+	return role == auth.RoleAdmin && !isDisabled
+}
+
+// hasAnotherActiveAdminLocked reports whether at least one OTHER user
+// (id != exceptID) is an active admin. It iterates the collection the same
+// way rebuildIndex does (via listAll) and returns on the first match.
+//
+// Must be called while holding s.mu: it must not call s.List (which only
+// RLocks the index but would not observe uncommitted writes anyway) and must
+// not take s.mu again (the mutex is not reentrant).
+func (s *UserStore) hasAnotherActiveAdminLocked(ctx context.Context, exceptID string) (bool, error) {
+	recs, err := listAll(ctx, s.col, persis.ListQuery{})
+	if err != nil {
+		return false, err
+	}
+	for _, rec := range recs {
+		if rec.ID == exceptID {
+			continue
+		}
+		var stored auth.UserForStorage
+		if err := persis.Decode(rec, &stored); err != nil {
+			continue
+		}
+		if isActiveAdmin(stored.Role, stored.IsDisabled) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // oidcKey creates a composite key for the OIDC identity index.
 // URL-encodes both components to prevent collisions when values contain ":".

@@ -8,7 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { UserAuthProvider, UserRole, type components } from '@/api/v1/schema';
 import { AppBarContext } from '@/contexts/AppBarContext';
-import { ConfigContext, type Config } from '@/contexts/ConfigContext';
+import {
+  ConfigContext,
+  type Config,
+  type LicenseStatus,
+} from '@/contexts/ConfigContext';
 import UsersPage from '..';
 import { UserFormModal } from '../UserFormModal';
 
@@ -71,6 +75,22 @@ function makeConfig(): Config {
   };
 }
 
+// Community mode (no Pro license): the server only lists a feature here when the
+// operator opted in via DAGU_LICENSE_COMMUNITY_FEATURES, so a non-empty
+// features array is the opt-in signal.
+function makeCommunityLicense(features: string[]): LicenseStatus {
+  return {
+    valid: false,
+    plan: '',
+    expiry: '',
+    features,
+    gracePeriod: false,
+    community: true,
+    source: '',
+    warningCode: '',
+  };
+}
+
 function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: 'oidc-user',
@@ -98,16 +118,24 @@ const appBarValue = {
   workspaces: [{ id: 'payments', name: 'payments' }],
 };
 
-function renderPage(response: components['schemas']['UsersListResponse']) {
+function renderPage(
+  response: components['schemas']['UsersListResponse'],
+  license?: LicenseStatus
+) {
   const fetchMock = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => response,
   });
   vi.stubGlobal('fetch', fetchMock);
 
+  const config = makeConfig();
+  if (license) {
+    config.license = license;
+  }
+
   render(
     <MemoryRouter>
-      <ConfigContext.Provider value={makeConfig()}>
+      <ConfigContext.Provider value={config}>
         <AppBarContext.Provider value={appBarValue}>
           <UsersPage />
         </AppBarContext.Provider>
@@ -146,6 +174,38 @@ describe('UsersPage', () => {
 
     expect(await screen.findByText('Managed by SSO')).toBeVisible();
     expect(screen.getByText('Local')).toBeVisible();
+  });
+
+  it('honors community-mode rbac when the operator opted in', async () => {
+    renderPage(
+      {
+        users: [makeUser()],
+        managedRoleProviders: [],
+        managedWorkspaceAccessProviders: [],
+      },
+      makeCommunityLicense(['rbac'])
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Add User' })
+    ).toBeVisible();
+    expect(screen.queryByText(/require a/)).not.toBeInTheDocument();
+  });
+
+  it('keeps rbac disabled in community mode without opt-in', async () => {
+    renderPage(
+      {
+        users: [makeUser()],
+        managedRoleProviders: [],
+        managedWorkspaceAccessProviders: [],
+      },
+      makeCommunityLicense([])
+    );
+
+    expect(await screen.findByText(/require a/)).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'Add User' })
+    ).not.toBeInTheDocument();
   });
 
   it('marks only the OIDC role as managed for role-only sync', async () => {

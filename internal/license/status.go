@@ -31,6 +31,14 @@ func StatusFor(checker Checker) Status {
 
 	claims := checker.Claims()
 	if claims == nil {
+		// Community mode: project any features configured for community mode
+		// so UI capability checks can honor them. The assertion is optional
+		// so the Checker interface stays unchanged for existing fakes.
+		if cf, ok := checker.(interface{ CommunityFeatures() []string }); ok {
+			if features := cf.CommunityFeatures(); len(features) > 0 {
+				status.Features = append([]string{}, features...)
+			}
+		}
 		return status
 	}
 

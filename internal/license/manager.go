@@ -32,6 +32,10 @@ type ManagerConfig struct {
 	LicenseDir string
 	ConfigKey  string
 	CloudURL   string
+	// CommunityFeatures lists the features enabled while no license is
+	// loaded (community mode). Empty/omitted keeps upstream behavior where
+	// every feature is disabled without a license.
+	CommunityFeatures []string
 }
 
 // ActivationResult is returned after a successful activation.
@@ -69,7 +73,7 @@ func NewManager(cfg ManagerConfig, pubKey ed25519.PublicKey, store ActivationSto
 	}
 	return &Manager{
 		cfg:    cfg,
-		state:  &State{},
+		state:  newState(cfg.CommunityFeatures),
 		store:  store,
 		client: NewCloudClient(cfg.CloudURL),
 		pubKey: pubKey,

@@ -210,6 +210,102 @@ func TestManager_Start_CommunityMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Community features configured via ManagerConfig
+// ---------------------------------------------------------------------------
+
+func TestManager_CommunityFeatures(t *testing.T) {
+	// Subtests use t.Setenv so the parent must not call t.Parallel.
+
+	t.Run("configured features enabled after start with no license", func(t *testing.T) {
+		t.Setenv("DAGU_LICENSE", "")
+		t.Setenv("DAGU_LICENSE_KEY", "")
+		t.Setenv("DAGU_LICENSE_FILE", "")
+
+		pub, _ := testKeyPair(t)
+		m := NewManager(ManagerConfig{
+			LicenseDir:        t.TempDir(),
+			CommunityFeatures: []string{FeatureRBAC},
+		}, pub, nil, slog.Default())
+
+		require.NoError(t, m.Start(context.Background()))
+
+		checker := m.Checker()
+		assert.True(t, checker.IsCommunity())
+		assert.True(t, checker.IsFeatureEnabled(FeatureRBAC))
+		assert.False(t, checker.IsFeatureEnabled(FeatureSSO))
+		assert.False(t, checker.IsFeatureEnabled(FeatureAudit))
+	})
+
+	t.Run("configured features active on freshly constructed manager", func(t *testing.T) {
+		pub, _ := testKeyPair(t)
+		m := NewManager(ManagerConfig{
+			LicenseDir:        t.TempDir(),
+			CommunityFeatures: []string{FeatureRBAC, FeatureSSO},
+		}, pub, nil, slog.Default())
+
+		checker := m.Checker()
+		assert.True(t, checker.IsFeatureEnabled(FeatureRBAC))
+		assert.True(t, checker.IsFeatureEnabled(FeatureSSO))
+		assert.False(t, checker.IsFeatureEnabled(FeatureAudit))
+	})
+
+	t.Run("configured features survive discovery failure", func(t *testing.T) {
+		t.Setenv("DAGU_LICENSE", "")
+		t.Setenv("DAGU_LICENSE_KEY", "")
+		t.Setenv("DAGU_LICENSE_FILE", "")
+
+		pub, _ := testKeyPair(t)
+		store := &mockActivationStore{loadErr: errors.New("disk read failure")}
+		m := NewManager(ManagerConfig{
+			LicenseDir:        t.TempDir(),
+			CommunityFeatures: []string{FeatureRBAC},
+		}, pub, store, slog.Default())
+
+		require.NoError(t, m.Start(context.Background()))
+
+		assert.True(t, m.Checker().IsCommunity())
+		assert.Equal(t, licenseDiscoveryFailure, m.Failure())
+		assert.True(t, m.Checker().IsFeatureEnabled(FeatureRBAC),
+			"community features must remain active in community mode")
+	})
+
+	t.Run("configured features survive deactivation", func(t *testing.T) {
+		pub, priv := testKeyPair(t)
+		token := signToken(t, priv, validClaims())
+
+		store := &mockActivationStore{data: &ActivationData{
+			Token:           token,
+			HeartbeatSecret: "hb",
+			LicenseKey:      "key",
+			ServerID:        "srv",
+		}}
+
+		t.Setenv("DAGU_LICENSE", "")
+		t.Setenv("DAGU_LICENSE_KEY", "")
+		t.Setenv("DAGU_LICENSE_FILE", "")
+
+		m := NewManager(ManagerConfig{
+			LicenseDir:        t.TempDir(),
+			CloudURL:          "http://127.0.0.1:0",
+			CommunityFeatures: []string{FeatureRBAC},
+		}, pub, store, slog.Default())
+		require.NoError(t, m.Start(context.Background()))
+
+		// While licensed, claims drive the features.
+		require.False(t, m.Checker().IsCommunity())
+		require.True(t, m.Checker().IsFeatureEnabled(FeatureRBAC))
+
+		require.NoError(t, m.Deactivate(context.Background()))
+
+		checker := m.Checker()
+		assert.True(t, checker.IsCommunity(), "state must be cleared after deactivate")
+		assert.True(t, checker.IsFeatureEnabled(FeatureRBAC),
+			"community features must remain active after deactivation")
+		assert.False(t, checker.IsFeatureEnabled(FeatureSSO))
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Start — inline JWT via DAGU_LICENSE env
 // ---------------------------------------------------------------------------
 

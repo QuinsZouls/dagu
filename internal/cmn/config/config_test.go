@@ -640,6 +640,45 @@ func TestConfig_Validate(t *testing.T) {
 	})
 }
 
+func TestConfig_ValidateLicenseCommunityFeatures(t *testing.T) {
+	t.Parallel()
+
+	t.Run("AcceptsValidFeatures", func(t *testing.T) {
+		t.Parallel()
+		cfg := validBaseConfig()
+		cfg.License.CommunityFeatures = []string{"audit", "rbac", "sso"}
+		require.NoError(t, cfg.Validate())
+	})
+
+	t.Run("AcceptsEmpty", func(t *testing.T) {
+		t.Parallel()
+		cfg := validBaseConfig()
+		cfg.License.CommunityFeatures = nil
+		require.NoError(t, cfg.Validate())
+		cfg.License.CommunityFeatures = []string{}
+		require.NoError(t, cfg.Validate())
+	})
+
+	t.Run("RejectsUnknownFeature", func(t *testing.T) {
+		t.Parallel()
+		cfg := validBaseConfig()
+		cfg.License.CommunityFeatures = []string{"rbac", "sso2"}
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"sso2"`)
+		assert.Contains(t, err.Error(), "audit, rbac, sso")
+	})
+
+	t.Run("RejectsNonLowercaseFeature", func(t *testing.T) {
+		t.Parallel()
+		cfg := validBaseConfig()
+		cfg.License.CommunityFeatures = []string{"RBAC"}
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"RBAC"`)
+	})
+}
+
 func TestConfigValidateIPAccess(t *testing.T) {
 	t.Parallel()
 

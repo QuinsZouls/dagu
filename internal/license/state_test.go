@@ -222,6 +222,104 @@ func TestState_IsFeatureEnabled(t *testing.T) {
 		assert.False(t, s.IsFeatureEnabled(FeatureAudit))
 		assert.False(t, s.IsGracePeriod())
 	})
+
+	t.Run("nil claims with community features enables only configured ones", func(t *testing.T) {
+		t.Parallel()
+		s := newState([]string{FeatureRBAC})
+		assert.True(t, s.IsFeatureEnabled(FeatureRBAC))
+		assert.False(t, s.IsFeatureEnabled(FeatureSSO))
+		assert.False(t, s.IsFeatureEnabled(FeatureAudit))
+	})
+
+	t.Run("nil claims with nil community features returns false for all", func(t *testing.T) {
+		t.Parallel()
+		s := newState(nil)
+		assert.False(t, s.IsFeatureEnabled(FeatureRBAC))
+		assert.False(t, s.IsFeatureEnabled(FeatureSSO))
+		assert.False(t, s.IsFeatureEnabled(FeatureAudit))
+	})
+
+	t.Run("nil claims with empty community features returns false for all", func(t *testing.T) {
+		t.Parallel()
+		s := newState([]string{})
+		assert.False(t, s.IsFeatureEnabled(FeatureRBAC))
+		assert.False(t, s.IsFeatureEnabled(FeatureSSO))
+		assert.False(t, s.IsFeatureEnabled(FeatureAudit))
+	})
+
+	t.Run("community features ignored while a license is loaded", func(t *testing.T) {
+		t.Parallel()
+		claims := &LicenseClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			},
+			Plan:     "pro",
+			Features: []string{FeatureAudit},
+		}
+		s := newState([]string{FeatureRBAC, FeatureSSO})
+		s.Update(claims, "tok")
+		// Licensed feature still comes from the claims.
+		assert.True(t, s.IsFeatureEnabled(FeatureAudit))
+		// Community-configured features are ignored while claims exist,
+		// even when the claims lack them.
+		assert.False(t, s.IsFeatureEnabled(FeatureRBAC))
+		assert.False(t, s.IsFeatureEnabled(FeatureSSO))
+	})
+
+	t.Run("community features ignored when licensed claims expired past grace", func(t *testing.T) {
+		t.Parallel()
+		s := newState([]string{FeatureRBAC})
+		s.Update(expiredPastGraceClaims(), "tok")
+		assert.False(t, s.IsFeatureEnabled(FeatureRBAC))
+		assert.False(t, s.IsFeatureEnabled(FeatureAudit))
+	})
+
+	t.Run("community features still active after claims cleared", func(t *testing.T) {
+		t.Parallel()
+		s := newState([]string{FeatureRBAC})
+		s.Update(validClaims(), "tok")
+		require.True(t, s.IsFeatureEnabled(FeatureRBAC))
+		s.Update(nil, "")
+		assert.True(t, s.IsFeatureEnabled(FeatureRBAC),
+			"Update(nil claims) must not clear configured community features")
+	})
+}
+
+// TestState_CommunityFeatures verifies the CommunityFeatures accessor.
+func TestState_CommunityFeatures(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero value returns empty non-nil slice", func(t *testing.T) {
+		t.Parallel()
+		var s State
+		got := s.CommunityFeatures()
+		assert.NotNil(t, got)
+		assert.Empty(t, got)
+	})
+
+	t.Run("returns configured features preserving order", func(t *testing.T) {
+		t.Parallel()
+		s := newState([]string{FeatureRBAC, FeatureSSO})
+		assert.Equal(t, []string{FeatureRBAC, FeatureSSO}, s.CommunityFeatures())
+	})
+
+	t.Run("returned slice is a defensive copy", func(t *testing.T) {
+		t.Parallel()
+		s := newState([]string{FeatureRBAC})
+		got := s.CommunityFeatures()
+		require.NotEmpty(t, got)
+		got[0] = "mutated"
+		_ = append(got, "extra")
+		assert.Equal(t, []string{FeatureRBAC}, s.CommunityFeatures())
+	})
+
+	t.Run("constructor does not alias the input slice", func(t *testing.T) {
+		t.Parallel()
+		input := []string{FeatureRBAC}
+		s := newState(input)
+		input[0] = "mutated"
+		assert.Equal(t, []string{FeatureRBAC}, s.CommunityFeatures())
+	})
 }
 
 func TestState_IsGracePeriod(t *testing.T) {
