@@ -323,7 +323,7 @@ func (a *API) requireIncidentManagement(ctx context.Context) error {
 	if err := a.requireDeveloperOrAbove(ctx); err != nil {
 		return err
 	}
-	return a.requireLicensedIncidentManagement()
+	return nil
 }
 
 func incidentRequestError(err error) bool {

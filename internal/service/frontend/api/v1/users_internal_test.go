@@ -11,7 +11,6 @@ import (
 	generatedapi "github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/auth"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	authservice "github.com/dagucloud/dagu/v2/internal/service/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,19 +61,14 @@ func TestOIDCWorkspaceAccessSyncEnabled(t *testing.T) {
 	inactivePolicy.Server.Auth.OIDC.RoleMapping.DefaultWorkspaceAccess = config.OIDCDefaultWorkspaceAccessAll
 	syncDisabled := newOIDCWorkspaceSyncConfig()
 	syncDisabled.Server.Auth.OIDC.RoleMapping.SkipOrgRoleSync = true
-	licensedManager := license.NewTestManager(license.FeatureSSO)
-	unlicensedManager := license.NewTestManager(license.FeatureRBAC)
 
 	tests := []struct {
-		name           string
-		config         *config.Config
-		licenseManager *license.Manager
-		want           bool
+		name   string
+		config *config.Config
+		want   bool
 	}{
 		{name: "missing config", config: nil, want: false},
 		{name: "configured policy", config: configuredPolicy, want: true},
-		{name: "licensed policy", config: configuredPolicy, licenseManager: licensedManager, want: true},
-		{name: "SSO not licensed", config: configuredPolicy, licenseManager: unlicensedManager, want: false},
 		{name: "non builtin auth", config: nonBuiltin, want: false},
 		{name: "incomplete OIDC", config: incompleteOIDC, want: false},
 		{name: "inactive policy", config: inactivePolicy, want: false},
@@ -84,7 +78,7 @@ func TestOIDCWorkspaceAccessSyncEnabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			a := &API{config: tt.config, licenseManager: tt.licenseManager}
+			a := &API{config: tt.config}
 			mapping := a.currentOIDCMapping()
 			assert.Equal(t, tt.want, a.oidcWorkspaceSync(mapping))
 		})
@@ -210,10 +204,6 @@ func TestManagedProvidersIncludesProxySync(t *testing.T) {
 	assert.Empty(t, a.managedProviders(false))
 
 	cfg.Server.Auth.Proxy.RoleMapping.SkipOrgRoleSync = false
-	a.licenseManager = license.NewTestManager(license.FeatureRBAC)
-	assert.Empty(t, a.managedProviders(false))
-
-	a.licenseManager = license.NewTestManager(license.FeatureSSO)
 	assert.Equal(t,
 		[]generatedapi.UserAuthProvider{generatedapi.UserAuthProviderProxy},
 		a.managedProviders(false),

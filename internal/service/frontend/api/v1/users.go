@@ -12,7 +12,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/audit"
 	"github.com/dagucloud/dagu/v2/internal/auth"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	authservice "github.com/dagucloud/dagu/v2/internal/service/auth"
 )
 
@@ -57,9 +56,6 @@ func (a *API) managedProviders(oidcSyncEnabled bool) []api.UserAuthProvider {
 	if a.config == nil {
 		return providers
 	}
-	if a.licenseManager != nil && !a.licenseManager.Checker().IsFeatureEnabled(license.FeatureSSO) {
-		return providers
-	}
 	authConfig := a.config.Server.Auth
 	if authConfig.Mode == config.AuthModeBuiltin &&
 		authConfig.Proxy.Enabled &&
@@ -96,9 +92,6 @@ func (a *API) oidcSyncEnabled(mapping config.OIDCRoleMapping) bool {
 	if a.config == nil {
 		return false
 	}
-	if a.licenseManager != nil && !a.licenseManager.Checker().IsFeatureEnabled(license.FeatureSSO) {
-		return false
-	}
 	authConfig := a.config.Server.Auth
 	return authConfig.Mode == config.AuthModeBuiltin &&
 		authConfig.OIDC.IsConfigured() &&
@@ -111,9 +104,6 @@ func (a *API) CreateUser(ctx context.Context, request api.CreateUserRequestObjec
 		return nil, err
 	}
 	if err := a.requireAdmin(ctx); err != nil {
-		return nil, err
-	}
-	if err := a.requireLicensedRBAC(); err != nil {
 		return nil, err
 	}
 
@@ -215,9 +205,6 @@ func (a *API) UpdateUser(ctx context.Context, request api.UpdateUserRequestObjec
 		return nil, err
 	}
 	if err := a.requireAdmin(ctx); err != nil {
-		return nil, err
-	}
-	if err := a.requireLicensedRBAC(); err != nil {
 		return nil, err
 	}
 
@@ -341,9 +328,6 @@ func (a *API) DeleteUser(ctx context.Context, request api.DeleteUserRequestObjec
 		return nil, err
 	}
 	if err := a.requireAdmin(ctx); err != nil {
-		return nil, err
-	}
-	if err := a.requireLicensedRBAC(); err != nil {
 		return nil, err
 	}
 

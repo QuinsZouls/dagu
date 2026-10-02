@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/dagucloud/dagu/v2/api/v1"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +86,7 @@ const raceLastAdminMsg = "Cannot remove the last active admin"
 func TestCommunityMultiUser_ConcurrentDemotionKeepsOneAdmin(t *testing.T) {
 	t.Parallel()
 
-	srv := communityFeaturesServer(t, license.FeatureRBAC)
+	srv := rbacTestServer(t)
 	tokenA := communitySetupAdmin(t, srv) // "admin" / "adminpass1"
 
 	// Create the second admin and give it a live session.

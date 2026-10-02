@@ -10,8 +10,6 @@ import (
 
 	"github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
-	"github.com/dagucloud/dagu/v2/internal/license"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,37 +40,6 @@ func setupBuiltinAuthServer(t *testing.T, configMutators ...func(*config.Config)
 				mutate(cfg)
 			}
 		}),
-		test.WithServerOptions(frontend.WithLicenseManager(defaultTestLicenseManager())),
-	)
-
-	// Create admin via setup endpoint
-	server.Client().Post("/api/v1/auth/setup", api.SetupRequest{
-		Username: "admin",
-		Password: "adminpass",
-	}).ExpectStatus(http.StatusOK).Send(t)
-
-	return server
-}
-
-func setupBuiltinAuthCommunityServer(t *testing.T) test.Server {
-	t.Helper()
-	return setupBuiltinAuthTestServer(t)
-}
-
-func setupBuiltinAuthExpiredLicenseServer(t *testing.T) test.Server {
-	t.Helper()
-	return setupBuiltinAuthTestServer(t, frontend.WithLicenseManager(license.NewExpiredTestManager()))
-}
-
-func setupBuiltinAuthTestServer(t *testing.T, opts ...frontend.ServerOption) test.Server {
-	t.Helper()
-	server := test.SetupServer(t,
-		test.WithConfigMutator(func(cfg *config.Config) {
-			cfg.Server.Auth.Mode = config.AuthModeBuiltin
-			cfg.Server.Auth.Builtin.Token.Secret = "jwt-secret-key"
-			cfg.Server.Auth.Builtin.Token.TTL = 24 * time.Hour
-		}),
-		test.WithServerOptions(opts...),
 	)
 
 	// Create admin via setup endpoint
@@ -269,23 +236,17 @@ func TestAPIKeys_CreateDuplicate(t *testing.T) {
 		WithBearerToken(token).ExpectStatus(http.StatusConflict).Send(t)
 }
 
-func TestAPIKeys_CreateCommunityLimit(t *testing.T) {
+// TestCreateAPIKey_NoLimit verifies there is no API-key count cap: creations
+// beyond the former community limit (2) succeed and are listed.
+func TestCreateAPIKey_NoLimit(t *testing.T) {
 	t.Parallel()
-	server := setupBuiltinAuthCommunityServer(t)
+	server := setupBuiltinAuthServer(t)
 	token := getAdminToken(t, server)
 
-	for _, name := range []string{"community-key-1", "community-key-2"} {
+	for _, name := range []string{"key-1", "key-2", "key-3", "key-4", "key-5"} {
 		server.Client().Post("/api/v1/api-keys", newCreateAPIKeyRequest(name, api.UserRoleViewer)).
 			WithBearerToken(token).ExpectStatus(http.StatusCreated).Send(t)
 	}
-
-	resp := server.Client().Post("/api/v1/api-keys", newCreateAPIKeyRequest("community-key-3", api.UserRoleViewer)).
-		WithBearerToken(token).ExpectStatus(http.StatusForbidden).Send(t)
-
-	var errResp api.Error
-	resp.Unmarshal(t, &errResp)
-	assert.Equal(t, api.ErrorCodeForbidden, errResp.Code)
-	assert.Contains(t, errResp.Message, "Community edition supports up to 2 API keys")
 
 	listResp := server.Client().Get("/api/v1/api-keys").
 		WithBearerToken(token).
@@ -293,32 +254,7 @@ func TestAPIKeys_CreateCommunityLimit(t *testing.T) {
 
 	var listResult api.APIKeysListResponse
 	listResp.Unmarshal(t, &listResult)
-	assert.Len(t, listResult.ApiKeys, 2)
-}
-
-func TestAPIKeys_CreateExpiredLicenseUsesCommunityLimit(t *testing.T) {
-	t.Parallel()
-	server := setupBuiltinAuthExpiredLicenseServer(t)
-	token := getAdminToken(t, server)
-
-	for _, name := range []string{"expired-key-1", "expired-key-2"} {
-		server.Client().Post("/api/v1/api-keys", newCreateAPIKeyRequest(name, api.UserRoleViewer)).
-			WithBearerToken(token).ExpectStatus(http.StatusCreated).Send(t)
-	}
-
-	server.Client().Post("/api/v1/api-keys", newCreateAPIKeyRequest("expired-key-3", api.UserRoleViewer)).
-		WithBearerToken(token).ExpectStatus(http.StatusForbidden).Send(t)
-}
-
-func TestAPIKeys_CreateLicensedAllowsMoreThanCommunityLimit(t *testing.T) {
-	t.Parallel()
-	server := setupBuiltinAuthServer(t)
-	token := getAdminToken(t, server)
-
-	for _, name := range []string{"licensed-key-1", "licensed-key-2", "licensed-key-3"} {
-		server.Client().Post("/api/v1/api-keys", newCreateAPIKeyRequest(name, api.UserRoleViewer)).
-			WithBearerToken(token).ExpectStatus(http.StatusCreated).Send(t)
-	}
+	assert.Len(t, listResult.ApiKeys, 5)
 }
 
 // TestAPIKeys_GetNotFound tests getting a non-existent API key
