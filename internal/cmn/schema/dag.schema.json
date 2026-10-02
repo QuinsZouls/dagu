@@ -2643,6 +2643,42 @@
         },
         {
           "if": {
+            "properties": { "action": { "enum": ["xlsx.read", "xlsx.info", "xlsx.list_sheets", "xlsx.write", "xlsx.append", "xlsx.update_rows"] } },
+            "required": ["action"]
+          },
+          "then": {
+            "required": ["with"],
+            "properties": {
+              "with": { "$ref": "#/definitions/xlsxActionConfig" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "enum": ["xlsx.write", "xlsx.append"] } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": {
+                "anyOf": [{ "required": ["rows"] }, { "required": ["input"] }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "xlsx.update_rows" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": { "required": ["key", "rows"] }
+            }
+          }
+        },
+        {
+          "if": {
             "properties": { "action": { "enum": ["s3.upload", "s3.download", "s3.list", "s3.delete"] } },
             "required": ["action"]
           },
@@ -3013,6 +3049,19 @@
               "with": { "$ref": "#/definitions/fileActionConfig" },
               "config": {
                 "$ref": "#/definitions/fileActionConfig",
+                "deprecated": true,
+                "doNotSuggest": true
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "xlsx" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "with": { "$ref": "#/definitions/xlsxActionConfig" },
+              "config": {
+                "$ref": "#/definitions/xlsxActionConfig",
                 "deprecated": true,
                 "doNotSuggest": true
               }
@@ -6467,7 +6516,8 @@
         "action",
         "outputs",
         "sftp",
-        "template"
+        "template",
+        "xlsx"
       ],
       "description": "Type of executor to use for this step, including aliases such as k8s / kubernetes."
     },
@@ -6552,7 +6602,13 @@
             "wait.duration",
             "wait.file",
             "wait.http",
-            "wait.until"
+            "wait.until",
+            "xlsx.append",
+            "xlsx.info",
+            "xlsx.list_sheets",
+            "xlsx.read",
+            "xlsx.update_rows",
+            "xlsx.write"
           ],
           "description": "Builtin action name."
         },
@@ -7824,6 +7880,157 @@
       },
       "description": "Configuration for action: template.render."
     },
+    "xlsxActionConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Workbook path (.xlsx). Relative paths resolve against the step working directory. Required."
+        },
+        "password": {
+          "type": "string",
+          "description": "Password of a protected workbook. Reference a secret or ${env.NAME} rather than writing it here."
+        },
+        "sheet": {
+          "type": "string",
+          "description": "Sheet name; the first sheet by default. Matched exactly, then case-insensitively."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cell range such as A2:F or A2:F200, a Sheet!A2:F reference, a named range, or a table name. Without it the data block is detected: leading empty rows and columns are skipped."
+        },
+        "header": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "integer", "minimum": 1 },
+            { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1 },
+            { "type": "string" }
+          ],
+          "description": "true (default) takes the first row of the range as column names, false names columns A, B, C, a row number takes that sheet row, and a list such as [3, 4] joins two header rows with a space."
+        },
+        "columns": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "object", "additionalProperties": { "type": "string" }, "minProperties": 1, "maxProperties": 1 }
+                ]
+              }
+            },
+            { "type": "string" }
+          ],
+          "description": "Columns to keep, in order: names, or {name: alias} entries to rename, such as [Status, {Invoice No: invoice_no}]."
+        },
+        "merged": {
+          "type": "string",
+          "enum": ["fill", "first"],
+          "description": "How merged cells are read: fill (default) repeats the value into every covered cell; first keeps it in the top-left cell only."
+        },
+        "stop_at_blank": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Stop at the first fully empty row instead of reading to the end of the used range."
+        },
+        "keep_empty_rows": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Keep trailing empty rows as rows of nulls."
+        },
+        "trim": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Trim surrounding white space, including full-width spaces, from text cells."
+        },
+        "formulas": {
+          "type": "string",
+          "enum": ["cached", "text", "calculate"],
+          "description": "What formula cells yield: cached (default) the stored result, text the formula itself, calculate an evaluation."
+        },
+        "types": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["string", "number", "integer", "boolean", "date", "datetime"]
+          },
+          "description": "Column types to enforce, such as {amount: number, due: date}. A cell that cannot convert fails the step naming the cell."
+        },
+        "on_type_error": {
+          "enum": ["fail", "warn", "null", null],
+          "description": "What a cell that fails its type does: fail (default) the step, or warn and read the cell as null."
+        },
+        "where": {
+          "type": "object",
+          "description": "Rows to keep: {Status: \"\"} matches empty cells, {Status: {ne: Done}} excludes a value, {Status: {in: [A, B]}} matches a list."
+        },
+        "max_rows": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "string" }],
+          "description": "Most rows to read, 1 or more. Defaults to 5000; truncated is true when more rows exist."
+        },
+        "rows": {
+          "oneOf": [{ "type": "array" }, { "type": "string" }],
+          "description": "Rows to write: a list of objects or arrays, usually ${steps.<id>.outputs.rows}. Rows from a step output arrive with keys in alphabetical order; set columns to choose the order, such as columns: ${steps.<id>.outputs.headers}."
+        },
+        "input": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File to write rows from instead of rows: .json (an array), .jsonl, or .csv with a header line."
+        },
+        "format": {
+          "type": "string",
+          "enum": ["json", "jsonl", "csv"],
+          "description": "Format of input when its extension does not say."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["replace", "append"],
+          "description": "What xlsx.write does to an existing sheet: replace (default) its contents, or append below its last row."
+        },
+        "style": {
+          "type": "string",
+          "enum": ["table", "none"],
+          "description": "How a new sheet looks: table (default) has a bold frozen header, fitted widths, and number formats by column; none writes bare cells."
+        },
+        "atomic": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Save through a temporary file renamed over the workbook. Defaults to true."
+        },
+        "dry_run": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Compute and report the changes without saving the workbook."
+        },
+        "wait_for_unlock": {
+          "type": "string",
+          "description": "How long to retry a workbook that another program holds open, such as 5m. Retries start at two seconds and double to one minute. Without it a locked workbook fails at once."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Column that identifies a row for xlsx.update_rows, or _row to address rows by the _row each row carries. A key column that is no longer in the header row fails the step before any cell changes."
+        },
+        "set": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "object", "properties": { "value": {} }, "required": ["value"], "additionalProperties": false }
+            ]
+          },
+          "description": "Columns to write for xlsx.update_rows: {Status: status} takes the status field of each row, {Reviewed: {value: yes}} writes one literal to every row. Omitted: every field other than the key and _row goes to the column of the same name. A column missing from the header is added at the right."
+        },
+        "missing": {
+          "type": "string",
+          "enum": ["fail", "skip", "append"],
+          "description": "What xlsx.update_rows does with a row whose key is not in the sheet: fail (default), skip it with a warning, or append it below the last row."
+        },
+        "artifact": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Keep a copy of the saved workbook with the run's artifacts, under xlsx/<step>/, so it is listed with the run. Enables artifact storage for the DAG."
+        }
+      },
+      "required": ["path"],
+      "description": "Configuration for action: xlsx.read, xlsx.info, xlsx.list_sheets, xlsx.write, xlsx.append, and xlsx.update_rows."
+    },
     "fileActionConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -8641,6 +8848,14 @@
           "then": {
             "properties": {
               "config": { "$ref": "#/definitions/fileActionConfig" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "xlsx" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "config": { "$ref": "#/definitions/xlsxActionConfig" }
             }
           }
         },

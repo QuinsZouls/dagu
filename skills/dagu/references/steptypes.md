@@ -788,6 +788,114 @@ first, each with `id`, `message_id`, `folder`, `from_name`, `from_address`, `to`
 mark it read inside the loop right after its work, so a failed email stays
 unread for the next run.
 
+## xlsx.read / xlsx.info / xlsx.list_sheets / xlsx.write / xlsx.append / xlsx.update_rows
+
+Read and write `.xlsx` workbooks without a spreadsheet application, on any
+platform. The pattern a per-row job needs is: read the rows still to do, act on
+each, and write each row's result back.
+
+```yaml
+steps:
+  - id: read
+    action: xlsx.read
+    with:
+      path: ~/Inbox/orders.xlsx
+      sheet: Orders
+      where: {Status: ""}
+  - id: each
+    depends: read
+    foreach:
+      items: ${steps.read.outputs.rows}
+      key: ${foreach.item.order_id}
+      steps:
+        - id: submit
+          action: http.request
+          with:
+            method: POST
+            url: https://erp.example.com/orders
+            body: ${foreach.item}
+            format: json
+      collect:
+        order_id: ${foreach.item.order_id}
+        status: ${steps.submit.outputs.status_code}
+    output: RESULTS
+    continue_on:
+      failure: true
+  - id: mark
+    depends: each
+    action: xlsx.update_rows
+    with:
+      path: ~/Inbox/orders.xlsx
+      sheet: Orders
+      key: order_id
+      rows: ${steps.each.outputs.RESULTS}
+      set: {Status: status}
+      wait_for_unlock: 5m
+```
+
+The loop's `collect` builds one object per row with the key and the result
+fields, and `rows` accepts the foreach aggregate directly: its `outputs` list,
+the collected objects of the item bodies that succeeded, is what gets written
+back. `continue_on.failure` on the loop lets the write-back run when some
+rows failed, so the rows that did succeed are marked and are not submitted
+again on the next run; the run still reports the failure.
+
+`xlsx.read` `with` fields: `path`, `password`, `sheet` (first sheet by default,
+matched case-insensitively), `range` (`A2:F`, `Sheet1!A2:F`, a named range, or a
+table; without it the data block is detected, skipping leading empty rows and
+columns), `header` (`true`, `false` for `A`, `B`, `C`, a row number, or `[3, 4]`
+to join two header rows), `columns` (names or `{name: alias}`), `merged` (`fill`
+or `first`), `stop_at_blank`, `keep_empty_rows`, `trim`, `formulas` (`cached`,
+`text`, `calculate`), `types` (`{amount: number, due: date}`), `on_type_error`
+(`fail` or `warn`), `where` (`{Status: ""}`, `{Status: {ne: Done}}`,
+`{Status: {in: [A, B]}}`), `max_rows` (default 5000). It publishes `rows` (objects
+keyed by header, each with `_row`), `count`, `headers`, `sheet`, `range`,
+`warnings`, and `truncated`; do not declare outputs on the step. Numbers stay
+numbers, dates become ISO 8601 text, text keeps leading zeros, and errors name
+the cell: `orders.xlsx Orders!D17: expected number, found "N/A"`.
+
+`xlsx.info` publishes `path`, `sheets` (each with `name`, `used_range`, `range`,
+`header_row`, `headers`, `types`, `row_count`, `tables`), `named_ranges`,
+`date_system`, and `warnings`; `xlsx.list_sheets` publishes `sheets` and `count`. Before writing
+a workflow for a workbook, read it with `dagu xlsx inspect <path>` or the MCP
+`workbook` target to learn its sheets, headers, and types.
+
+`xlsx.write` `with` fields: `path`, `sheet` (created when missing), `rows` (a
+list of objects or arrays, usually `${steps.<id>.outputs.rows}`) or `input` (a
+`.json`, `.jsonl`, or `.csv` file), `columns` (order and selection; rows from a
+step output arrive with keys in alphabetical order, so pass
+`columns: ${steps.<id>.outputs.headers}` to keep the sheet's order), `header`,
+`mode` (`replace` the sheet, the default, or `append`), `style` (`table`, the
+default: bold frozen header, fitted widths, number formats by column; or
+`none`), `types`, `atomic` (default `true`), `dry_run`, `wait_for_unlock`,
+`artifact`. A replaced sheet is cleared in place, so its position, the defined
+names scoped to it, and formulas elsewhere that refer to it stay valid; its
+merged regions and tables are removed. Other sheets, widths, styles, and
+defined names are untouched. ISO date strings become real dates. `xlsx.append` adds rows below the last used row,
+copying the style of the cell above, and writes a header only when the sheet is
+empty.
+
+`xlsx.update_rows` `with` fields: `path`, `sheet`, `key` (the column that
+identifies a row, or `_row`), `rows`, `set` (`{Status: status}` takes a field of
+each row, `{Reviewed: {value: yes}}` writes one literal; omitted, every field
+other than the key and `_row` goes to the column of the same name), `missing`
+(`fail`, `skip`, or `append`), `atomic`, `dry_run`, `wait_for_unlock`,
+`artifact`. Columns the sheet lacks are added at the right. Two checks run
+before any cell is written and cannot be turned off: the key column and every
+existing `set` column must still be in the header row by name, and a row
+addressed by `_row` must still hold its key there. Either failure fails the
+step with the file untouched.
+
+Every writer publishes `path`, `sheet`, `changes` (`{sheet, range, rows_updated,
+rows_appended, columns_added, cells_changed}`), `dry_run`, and `warnings`.
+By default, saves go through a temporary file renamed over the workbook;
+`atomic: false` saves in place. A workbook that Excel holds open on Windows
+fails with `is open in another program; close it and retry`; a `~$` lock file
+nobody holds is only a warning; `wait_for_unlock: 5m` retries with backoff
+instead of failing. `artifact: true` keeps a copy of the saved workbook with
+the run's artifacts; a copy that fails after the save is a warning, not a
+failed step.
+
 ## archive.create / archive.extract / archive.list
 
 Archive operations.
