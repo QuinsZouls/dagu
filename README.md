@@ -229,6 +229,8 @@ license:
 
 The same list can be set through the environment as a comma-separated value: `DAGU_LICENSE_COMMUNITY_FEATURES=rbac` (e.g. `rbac,sso`). Allowed values: `audit`, `rbac`, `sso` — case-sensitive; anything else is a config validation error.
 
+The opt-in applies only while no license is loaded: a lapsed license keeps its cached claims and disables community features until the license state is cleared (for example, on restart).
+
 ### What `rbac` unlocks
 
 With built-in auth and `rbac` enabled, admins can, through the existing UI (Users page) and the REST API (`POST/PATCH/DELETE /api/v1/users`):
@@ -238,11 +240,11 @@ With built-in auth and `rbac` enabled, admins can, through the existing UI (User
 
 Each user logs in with their own credentials and gets their own JWT session; roles (`admin`/`manager`/`developer`/`operator`/`viewer`) are enforced server-side.
 
-Integrity rule: the server refuses any change that would leave zero active admins (403 "Cannot remove the last active admin"); self-disable and self-delete are already refused.
+Integrity rule: the Users API refuses any change that would leave zero active admins (403 "Cannot remove the last active admin"), and self-disable and self-delete are refused. This rule is enforced atomically in the user store and applies in every license mode (community or Pro). It does not cover role synchronization performed by `sso` provisioning (OIDC / trusted-proxy sign-in), which updates roles outside the Users API — keep at least one locally managed admin account.
 
 ### What remains Pro
 
-Unless listed in `community_features`, SSO login (`sso`) and audit logs (`audit`) remain Pro. Incident providers and the 2-API-key community cap are NOT affected by this setting.
+Unless listed in `community_features`, SSO login (`sso`) and audit logs (`audit`) remain Pro. Incident providers and the 2-API-key community cap are NOT affected by this setting. Note that enabling `audit` unlocks the whole audit surface (audit-log writes such as failed-login entries, and the terminal audit path), not only the audit-logs page.
 
 > **Security note:** UI visibility follows server-reported features; enforcement is server-side.
 
