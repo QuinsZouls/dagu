@@ -15,7 +15,6 @@ import (
 
 	authmodel "github.com/dagucloud/dagu/v2/internal/auth"
 	cmnlogger "github.com/dagucloud/dagu/v2/internal/cmn/logger"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	authservice "github.com/dagucloud/dagu/v2/internal/service/auth"
 	"github.com/dagucloud/dagu/v2/internal/service/trustedproxyprovision"
 	"github.com/stretchr/testify/assert"
@@ -43,17 +42,6 @@ type trustedProxyTokenStub struct {
 func (s trustedProxyTokenStub) GenerateToken(*authmodel.User) (*authservice.TokenResult, error) {
 	return s.result, s.err
 }
-
-type trustedProxyLicenseStub struct {
-	enabled bool
-}
-
-func (s trustedProxyLicenseStub) IsFeatureEnabled(string) bool   { return s.enabled }
-func (s trustedProxyLicenseStub) Plan() string                   { return "test" }
-func (s trustedProxyLicenseStub) IsGracePeriod() bool            { return false }
-func (s trustedProxyLicenseStub) IsCommunity() bool              { return !s.enabled }
-func (s trustedProxyLicenseStub) Claims() *license.LicenseClaims { return nil }
-func (s trustedProxyLicenseStub) WarningCode() string            { return "" }
 
 func TestTrustedProxyLoginHandlerSuccess(t *testing.T) {
 	var logOutput bytes.Buffer
@@ -102,15 +90,8 @@ func TestTrustedProxyLoginHandlerFailures(t *testing.T) {
 		{name: "query", method: http.MethodGet, target: "?redirect=/other", wantStatus: http.StatusBadRequest, wantBody: "invalid request\n"},
 		{name: "body", method: http.MethodGet, body: "unexpected", wantStatus: http.StatusBadRequest, wantBody: "invalid request\n"},
 		{name: "chunked body", method: http.MethodGet, chunked: true, wantStatus: http.StatusBadRequest, wantBody: "invalid request\n"},
-		{name: "license", method: http.MethodGet, configure: func(cfg *TrustedProxyLoginConfig, _ *trustedProxyProvisionStub) {
-			cfg.LicenseChecker = trustedProxyLicenseStub{}
-		}, wantStatus: http.StatusForbidden, wantBody: "access denied\n"},
 		{name: "setup", method: http.MethodGet, configure: func(cfg *TrustedProxyLoginConfig, _ *trustedProxyProvisionStub) {
 			cfg.InitialSetupComplete = func(context.Context) (bool, error) { return false, nil }
-		}, wantStatus: http.StatusFound, wantLocation: "/base/setup"},
-		{name: "setup before license", method: http.MethodGet, configure: func(cfg *TrustedProxyLoginConfig, _ *trustedProxyProvisionStub) {
-			cfg.InitialSetupComplete = func(context.Context) (bool, error) { return false, nil }
-			cfg.LicenseChecker = trustedProxyLicenseStub{}
 		}, wantStatus: http.StatusFound, wantLocation: "/base/setup"},
 		{name: "setup check error", method: http.MethodGet, configure: func(cfg *TrustedProxyLoginConfig, _ *trustedProxyProvisionStub) {
 			cfg.InitialSetupComplete = func(context.Context) (bool, error) { return false, errors.New("store unavailable") }

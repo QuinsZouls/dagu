@@ -17,8 +17,6 @@ import (
 	api "github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/ir"
-	"github.com/dagucloud/dagu/v2/internal/license"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/dagucloud/dagu/v2/internal/test/intgharness"
 	"github.com/stretchr/testify/require"
@@ -174,11 +172,6 @@ func setupWebhookBuiltinAuthServer(t *testing.T) test.Server {
 			cfg.Server.Auth.Builtin.Token.Secret = "jwt-secret-key"
 			cfg.Server.Auth.Builtin.Token.TTL = 24 * time.Hour
 		}),
-		test.WithServerOptions(
-			frontend.WithLicenseManager(
-				license.NewTestManager(license.FeatureRBAC, license.FeatureAudit),
-			),
-		),
 	)
 
 	server.Client().Post("/api/v1/auth/setup", api.SetupRequest{

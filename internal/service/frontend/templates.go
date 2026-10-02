@@ -22,7 +22,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger"
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger/tag"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	"github.com/dagucloud/dagu/v2/internal/service/frontend/api/pathutil"
 	workspacepkg "github.com/dagucloud/dagu/v2/internal/workspace"
 )
@@ -134,18 +133,10 @@ type funcsConfig struct {
 
 	SetupRequiredChecker SetupRequiredChecker
 	UpdateChecker        UpdateChecker
-	LicenseChecker       license.Checker
-	LicenseManager       *license.Manager
 }
 
 func defaultFunctions(cfg *funcsConfig) template.FuncMap {
 	boolStr := func(b bool) string { return strconv.FormatBool(b) }
-	licenseStatus := func() license.Status {
-		if cfg.LicenseManager != nil {
-			return cfg.LicenseManager.Status()
-		}
-		return license.StatusFor(cfg.LicenseChecker)
-	}
 
 	return template.FuncMap{
 		"defTitle":              func(v any) string { s, _ := v.(string); return s },
@@ -202,24 +193,8 @@ func defaultFunctions(cfg *funcsConfig) template.FuncMap {
 		"permissionsRunDags":   func() string { return boolStr(cfg.Permissions[config.PermissionRunDAGs]) },
 
 		// Feature toggle functions
-		"oidcEnabled": func() string {
-			if !cfg.OIDCEnabled {
-				return "false"
-			}
-			if cfg.LicenseChecker != nil && !cfg.LicenseChecker.IsFeatureEnabled(license.FeatureSSO) {
-				return "false"
-			}
-			return "true"
-		},
-		"proxyEnabled": func() string {
-			if !cfg.ProxyEnabled {
-				return "false"
-			}
-			if cfg.LicenseChecker != nil && !cfg.LicenseChecker.IsFeatureEnabled(license.FeatureSSO) {
-				return "false"
-			}
-			return "true"
-		},
+		"oidcEnabled":     func() string { return boolStr(cfg.OIDCEnabled) },
+		"proxyEnabled":    func() string { return boolStr(cfg.ProxyEnabled) },
 		"terminalEnabled": func() string { return boolStr(cfg.TerminalEnabled) },
 		"gitSyncEnabled":  func() string { return boolStr(cfg.GitSyncEnabled) },
 
@@ -242,61 +217,6 @@ func defaultFunctions(cfg *funcsConfig) template.FuncMap {
 			}
 			_, version := cfg.UpdateChecker.GetUpdateInfo()
 			return version
-		},
-
-		// License functions
-		"licenseValid": func() string {
-			return boolStr(licenseStatus().Valid)
-		},
-		"licensePlan": func() string {
-			return licenseStatus().Plan
-		},
-		"licenseExpiry": func() string {
-			status := licenseStatus()
-			if status.Expiry.IsZero() {
-				return ""
-			}
-			return status.Expiry.Format("2006-01-02T15:04:05Z")
-		},
-		"licenseFeatures": func() string {
-			features := licenseStatus().Features
-			if len(features) == 0 {
-				return "[]"
-			}
-			b, err := json.Marshal(features)
-			if err != nil {
-				return "[]"
-			}
-			return string(b)
-		},
-		"licenseGracePeriod": func() string {
-			return boolStr(licenseStatus().GracePeriod)
-		},
-		"licenseGraceEndsAt": func() string {
-			status := licenseStatus()
-			if status.GraceEndsAt.IsZero() {
-				return ""
-			}
-			return status.GraceEndsAt.Format("2006-01-02T15:04:05Z")
-		},
-		"licenseCommunity": func() string {
-			return boolStr(licenseStatus().Community)
-		},
-		"licenseWarningCode": func() string {
-			return licenseStatus().WarningCode
-		},
-		"licenseError": func() string {
-			return licenseStatus().Failure
-		},
-		"licenseSource": func() string {
-			source := licenseStatus().Source
-			if source.IsEnv() {
-				return "env"
-			}
-			if source == license.SourceNone {
-				return ""
-			}
-			return "file"
 		},
 
 		// Path configuration functions
