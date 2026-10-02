@@ -37,6 +37,15 @@ describe('AdministrationPage', () => {
     expect(
       screen.getByRole('heading', { name: /administration/i })
     ).toBeVisible();
+
+    // Section headings.
+    expect(screen.getByRole('heading', { name: 'Access' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Security' })).toBeVisible();
+    expect(
+      screen.getByRole('heading', { name: 'Infrastructure' })
+    ).toBeVisible();
+
+    // Access section.
     expect(screen.getByRole('link', { name: /users/i })).toHaveAttribute(
       'href',
       '/users'
@@ -45,21 +54,42 @@ describe('AdministrationPage', () => {
       'href',
       '/api-keys'
     );
-    expect(screen.getByRole('link', { name: /remote nodes/i })).toHaveAttribute(
-      'href',
-      '/remote-nodes'
-    );
     expect(screen.getByText('Manage accounts and roles.')).toBeVisible();
     expect(
       screen.getByText('Issue access tokens for automation.')
     ).toBeVisible();
+
+    // Security section.
+    expect(
+      screen.getByRole('link', { name: /profiles/i })
+    ).toHaveAttribute('href', '/profiles');
+    expect(
+      screen.getByText('Manage environment profiles and DAG secret refs.')
+    ).toBeVisible();
+
+    // Infrastructure section.
+    expect(screen.getByRole('link', { name: /remote nodes/i })).toHaveAttribute(
+      'href',
+      '/remote-nodes'
+    );
     expect(
       screen.getByText('Configure distributed execution targets.')
     ).toBeVisible();
+    expect(screen.getByRole('link', { name: /terminal/i })).toHaveAttribute(
+      'href',
+      '/terminal'
+    );
     expect(screen.getByText('Open a server-side shell.')).toBeVisible();
+
+    // The license/entitlement card was removed by the license-free refactor
+    // (ruling R1: no license surface may remain) — assert it stays gone.
     expect(
-      screen.getByText('Review plan and entitlement status.')
-    ).toBeVisible();
+      screen.queryByText(/license|entitlement|review plan/i)
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /license|entitlement|plan/i })
+    ).not.toBeInTheDocument();
+
     expect(setTitle).toHaveBeenCalledWith('Administration');
   });
 });
