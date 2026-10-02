@@ -202,8 +202,7 @@ Dagu runs on one machine, on temporary workers your platform creates for each ru
 
 ### Licensing
 
-- **Community self-host:** No license key required. You operate the server, storage, upgrades, networking, and workers. Start with the [installation guide](https://docs.dagu.sh/getting-started/installation/).
-- **Self-host license:** Adds SSO, RBAC, audit logging, and incident SaaS integration to Dagu. See [self-host licensing](https://dagu.sh/pricing#self-host).
+Every feature ships in this GPL build: user management and RBAC, audit logging, SSO (OIDC and trusted proxy), incident management, and API keys with no artificial limit — there is no separate tier and nothing is gated. There is no key, no activation, and no phone-home. The code is licensed under GPL-3.0-or-later; see [LICENSING.md](./LICENSING.md) for the licensing notes and [FORK.md](./FORK.md) for what this fork changed relative to upstream.
 
 ## Key Features
 
@@ -216,54 +215,6 @@ Dagu runs on one machine, on temporary workers your platform creates for each ru
 - **Self-hosted:** A single binary that runs on Linux, macOS, and Windows. Execution scales out to a fleet of workers.
 - **Permission Control:** RBAC and SSO support for team environments, controlling who can view, run, and edit workflows through granular permissions and audit logging.
 - **MCP Server:** Authenticated MCP clients can inspect workflows and runs, maintain Wiki pages, apply changes, and control runs.
-
-## Community multi-user
-
-Upstream Dagu gates user management (create/edit/delete users) behind a Pro license; this fork adds an opt-in `license.community_features` list to enable selected capabilities in community mode without a license. Default: empty ⇒ behavior identical to upstream.
-
-```yaml
-license:
-  community_features:
-    - rbac
-```
-
-The same list can be set through the environment as a comma-separated value: `DAGU_LICENSE_COMMUNITY_FEATURES=rbac` (e.g. `rbac,sso`). Allowed values: `audit`, `rbac`, `sso` — case-sensitive; anything else is a config validation error.
-
-The opt-in applies only while no license is loaded: a lapsed license keeps its cached claims and disables community features until the license state is cleared (by deactivating the license or the license server rejecting it — a restart does NOT clear a persisted expired license).
-
-### What `rbac` unlocks
-
-With built-in auth and `rbac` enabled, admins can, through the existing UI (Users page) and the REST API (`POST/PATCH/DELETE /api/v1/users`):
-
-- create users, change roles, enable/disable, and delete accounts;
-- edit per-workspace role grants.
-
-Each user logs in with their own credentials and gets their own JWT session; roles (`admin`/`manager`/`developer`/`operator`/`viewer`) are enforced server-side.
-
-Integrity rule: the Users API refuses any change that would leave zero active admins (403 "Cannot remove the last active admin"), and self-disable and self-delete are refused. This rule is enforced atomically in the user store and applies in every license mode (community or Pro). It does not cover role synchronization performed by `sso` provisioning (OIDC / trusted-proxy sign-in), which updates roles outside the Users API — keep at least one locally managed admin account.
-
-### What remains Pro
-
-Unless listed in `community_features`, SSO login (`sso`) and audit logs (`audit`) remain Pro. Incident providers and the 2-API-key community cap are NOT affected by this setting. Note that enabling `audit` unlocks the whole audit surface (audit-log writes such as failed-login entries, and the terminal audit path), not only the audit-logs page.
-
-> **Security note:** UI visibility follows server-reported features; enforcement is server-side.
-
-This capability ships in binaries built from this fork, not in the official upstream image. With a fork-built image:
-
-```sh
-docker run --rm -v ~/.dagu:/var/lib/dagu -p 8080:8080 -e DAGU_LICENSE_COMMUNITY_FEATURES=rbac <image-built-from-this-fork> dagu start-all
-```
-
-Or add it to the `dagu` service in your compose file:
-
-```yaml
-services:
-  dagu:
-    environment:
-      - DAGU_LICENSE_COMMUNITY_FEATURES=rbac
-```
-
-Implementation lives in `internal/license` + `internal/cmn/config` (`license.ManagerConfig.CommunityFeatures`).
 
 ## Architecture
 
@@ -747,7 +698,7 @@ When using `builtin` auth, five roles control access:
 
 API keys can be created with independent role assignments. Audit logging tracks all actions.
 
-The Users API never accepts a change that would leave the instance with zero active admins (role demotion, disabling, or deletion of the last active admin is refused with 403), regardless of license mode; see [Community multi-user](#community-multi-user) for related details.
+The Users API never accepts a change that would leave the instance with zero active admins: role demotion, disabling, or deletion of the last active admin is refused with 403 `Cannot remove the last active admin`, and self-disable and self-delete are refused as well. The rule is enforced atomically in the user store. One caveat: role synchronization performed by SSO provisioning (OIDC / trusted-proxy sign-in) updates roles outside the Users API — keep at least one locally managed admin account.
 
 ### TLS and Secrets
 
@@ -879,7 +830,7 @@ See the [distributed execution documentation](https://docs.dagu.sh/server-admin/
 | `dagu cleanup <dag>` | Clean up old run data |
 | `dagu version` | Show version |
 
-The table lists the most common commands. The binary ships 31 in total, including `exec`, `ls`, `ps`, `rm`, `sync`, `schema`, `example`, `config`, `profile`, `context`, `license`, `upgrade`, and `completion`; run `dagu --help` or see the [CLI reference](https://docs.dagu.sh/getting-started/cli) for all of them.
+The table lists the most common commands. The binary ships 30 in total, including `exec`, `ls`, `ps`, `rm`, `sync`, `schema`, `example`, `config`, `profile`, `context`, `upgrade`, and `completion`; run `dagu --help` or see the [CLI reference](https://docs.dagu.sh/getting-started/cli) for all of them.
 
 ## Environment Variables
 
@@ -1003,7 +954,6 @@ remain inside `paths.dags_dir` continue to work. A symlink configured as
 | `DAGU_AUTH_TOKEN_TTL` | `24h` | JWT token lifetime (maximum: `8760h` / 365 days) |
 | `DAGU_AUTH_BUILTIN_INITIAL_ADMIN_USERNAME` | - | Auto-provision the first admin on startup (requires the password variable) |
 | `DAGU_AUTH_BUILTIN_INITIAL_ADMIN_PASSWORD` | - | Password for the auto-provisioned admin (minimum 8 characters) |
-| `DAGU_LICENSE_KEY` | - | License key for licensed self-host features |
 
 OIDC variables: `DAGU_AUTH_OIDC_CLIENT_ID`, `DAGU_AUTH_OIDC_CLIENT_SECRET`, `DAGU_AUTH_OIDC_ISSUER`, `DAGU_AUTH_OIDC_SCOPES`, `DAGU_AUTH_OIDC_WHITELIST`, `DAGU_AUTH_OIDC_AUTO_SIGNUP`, `DAGU_AUTH_OIDC_DEFAULT_ROLE`, `DAGU_AUTH_OIDC_ALLOWED_DOMAINS`.
 

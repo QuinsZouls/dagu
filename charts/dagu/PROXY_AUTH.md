@@ -16,7 +16,6 @@ this combination at startup.
 ## Prerequisites
 
 - Builtin authentication is initialized with a local emergency administrator.
-- The active license includes SSO.
 - Exactly one UI replica is running. The Helm chart rejects other replica counts
   while proxy authentication is enabled and uses the `Recreate` upgrade
   strategy to prevent old and new UI pods from overlapping.
