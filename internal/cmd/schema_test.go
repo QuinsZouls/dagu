@@ -38,7 +38,7 @@ func TestSchemaCommand(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, out, "server")
 		assert.Contains(t, out, "auth")
-		assert.Contains(t, out, "license")
+		assert.NotContains(t, out, "\"license\"")
 	})
 
 	t.Run("DAGSteps", func(t *testing.T) {
