@@ -29,7 +29,6 @@ import (
 	incidentmodel "github.com/dagucloud/dagu/v2/internal/incident"
 	"github.com/dagucloud/dagu/v2/internal/ir"
 	"github.com/dagucloud/dagu/v2/internal/launcher"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	notificationmodel "github.com/dagucloud/dagu/v2/internal/notification"
 	"github.com/dagucloud/dagu/v2/internal/opencodehost"
 	"github.com/dagucloud/dagu/v2/internal/pagination"
@@ -98,7 +97,6 @@ type API struct {
 	secretStore          secretpkg.Store
 	profileStore         profilepkg.Store
 	viewStore            view.Store
-	licenseManager       *license.Manager
 	apiKeyCreateMu       sync.Mutex
 	workspaceStore       workspace.Store
 	leaseStaleThreshold  time.Duration
@@ -285,13 +283,6 @@ func WithDAGSettingsStore(store dagsettings.Store) APIOption {
 func WithWikiStore(store wiki.PageStore) APIOption {
 	return func(a *API) {
 		a.wikiStore = store
-	}
-}
-
-// WithLicenseManager returns an APIOption that sets the API's license manager.
-func WithLicenseManager(m *license.Manager) APIOption {
-	return func(a *API) {
-		a.licenseManager = m
 	}
 }
 
@@ -899,21 +890,6 @@ var (
 		Code:       api.ErrorCodeUnauthorized,
 		Message:    "User management is not enabled",
 	}
-	errRBACNotLicensed = &Error{
-		HTTPStatus: http.StatusForbidden,
-		Code:       api.ErrorCodeForbidden,
-		Message:    "User management requires a Dagu Pro license",
-	}
-	errAuditNotLicensed = &Error{
-		HTTPStatus: http.StatusForbidden,
-		Code:       api.ErrorCodeForbidden,
-		Message:    "Audit logs require a Dagu Pro license",
-	}
-	errIncidentManagementNotLicensed = &Error{
-		HTTPStatus: http.StatusForbidden,
-		Code:       api.ErrorCodeForbidden,
-		Message:    "Incident providers and policies require an active Dagu license or trial",
-	}
 )
 
 // requireDAGWrite checks all permissions for DAG write operations:
@@ -947,48 +923,6 @@ func (a *API) requireUserManagement() error {
 	return nil
 }
 
-// requireLicensedRBAC checks if the RBAC feature is licensed.
-func (a *API) requireLicensedRBAC() error {
-	if a.licenseManager == nil {
-		return errRBACNotLicensed
-	}
-	if !a.licenseManager.Checker().IsFeatureEnabled(license.FeatureRBAC) {
-		return errRBACNotLicensed
-	}
-	return nil
-}
-
-// requireLicensedAudit checks if the audit feature is licensed.
-func (a *API) requireLicensedAudit() error {
-	if a.licenseManager == nil {
-		return errAuditNotLicensed
-	}
-	if !a.licenseManager.Checker().IsFeatureEnabled(license.FeatureAudit) {
-		return errAuditNotLicensed
-	}
-	return nil
-}
-
-func (a *API) requireLicensedIncidentManagement() error {
-	if a.licenseManager == nil {
-		return errIncidentManagementNotLicensed
-	}
-	if !license.HasActiveLicense(a.licenseManager.Checker()) {
-		return errIncidentManagementNotLicensed
-	}
-	return nil
-}
-
-func (a *API) isAuditLicensed() bool {
-	if a.auditService == nil {
-		return false
-	}
-	if a.licenseManager == nil {
-		return true
-	}
-	return a.licenseManager.Checker().IsFeatureEnabled(license.FeatureAudit)
-}
-
 // logAudit logs an audit entry with the specified category, action, and details.
 // It silently returns if the audit service is not configured.
 // User and IP are extracted from context; missing user is allowed (recorded as empty).
@@ -1006,7 +940,7 @@ func triggerActorFromContext(ctx context.Context) string {
 
 // LogAudit logs an audit entry with source/correlation context when present.
 func (a *API) LogAudit(ctx context.Context, category audit.Category, action string, details any) {
-	if !a.isAuditLicensed() {
+	if a.auditService == nil {
 		return
 	}
 
