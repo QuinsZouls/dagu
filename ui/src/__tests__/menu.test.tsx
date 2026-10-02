@@ -21,7 +21,6 @@ const useCanViewEventLogsMock = vi.fn();
 const useCanManageWebhooksMock = vi.fn();
 const useCanManageProfilesMock = vi.fn();
 const useCanViewAuditLogsMock = vi.fn();
-const useHasFeatureMock = vi.fn();
 const useViewsMock = vi.fn();
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -33,20 +32,6 @@ vi.mock('@/contexts/AuthContext', () => ({
   useCanManageWebhooks: () => useCanManageWebhooksMock(),
   useCanManageProfiles: () => useCanManageProfilesMock(),
   useCanViewAuditLogs: () => useCanViewAuditLogsMock(),
-}));
-
-vi.mock('@/hooks/useLicense', () => ({
-  useHasFeature: (feature: string) => useHasFeatureMock(feature),
-  useLicense: () => ({
-    valid: true,
-    plan: 'pro',
-    expiry: '',
-    features: [],
-    gracePeriod: false,
-    community: false,
-    source: 'test',
-    warningCode: '',
-  }),
 }));
 
 vi.mock('@/hooks/useViews', () => ({
@@ -77,16 +62,6 @@ const config: Config = {
   permissions: {
     writeDags: true,
     runDags: true,
-  },
-  license: {
-    valid: true,
-    plan: 'community',
-    expiry: '',
-    features: ['audit', 'rbac'],
-    gracePeriod: false,
-    community: true,
-    source: 'test',
-    warningCode: '',
   },
   paths: {
     dagsDir: '',
@@ -156,7 +131,6 @@ beforeEach(() => {
   useCanManageWebhooksMock.mockReturnValue(true);
   useCanManageProfilesMock.mockReturnValue(true);
   useCanViewAuditLogsMock.mockReturnValue(true);
-  useHasFeatureMock.mockReturnValue(true);
 });
 
 describe('sidebar menu', () => {
@@ -877,9 +851,7 @@ describe('sidebar menu', () => {
     ).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('does not append Pro labels to unavailable sidebar features', () => {
-    useHasFeatureMock.mockReturnValue(false);
-
+  it('does not append Pro labels or license entries to sidebar features', () => {
     renderMenu();
 
     fireEvent.click(screen.getByRole('button', { name: 'Monitor' }));
@@ -893,6 +865,12 @@ describe('sidebar menu', () => {
     expect(screen.getByRole('link', { name: 'Users' })).toBeVisible();
     expect(
       screen.queryByRole('link', { name: 'Users (Pro)' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Infrastructure' }));
+    expect(screen.getByRole('link', { name: 'Remote Nodes' })).toBeVisible();
+    expect(
+      screen.queryByRole('link', { name: 'License' })
     ).not.toBeInTheDocument();
   });
 });

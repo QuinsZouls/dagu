@@ -18,12 +18,10 @@ import {
 import { AppBarContext } from '@/contexts/AppBarContext';
 import { TOKEN_KEY, useAuth, useIsAdmin } from '@/contexts/AuthContext';
 import { useConfig } from '@/contexts/ConfigContext';
-import { useHasFeature } from '@/hooks/useLicense';
 import dayjs from '@/lib/dayjs';
 import ConfirmModal from '@/components/ui/confirm-dialog';
 import {
   Ban,
-  Info,
   Key,
   MoreHorizontal,
   Pencil,
@@ -32,13 +30,11 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { ResetPasswordModal } from './ResetPasswordModal';
 import { UserFormModal } from './UserFormModal';
 import { I18nText } from '@/i18n/I18nText';
 import { I18nProps } from '@/i18n/I18nProps';
 import { useI18n } from '@/i18n/I18nProvider';
-import { I18nTemplate } from '@/i18n/I18nTemplate';
 
 type User = components['schemas']['User'];
 type UsersListResponse = components['schemas']['UsersListResponse'];
@@ -95,7 +91,6 @@ export default function UsersPage() {
   const config = useConfig();
   const { user: currentUser } = useAuth();
   const isAdmin = useIsAdmin();
-  const hasRbac = useHasFeature('rbac');
   const appBarContext = useContext(AppBarContext);
   const [users, setUsers] = useState<User[]>([]);
   const [managedRoleProviders, setManagedRoleProviders] = useState<
@@ -248,42 +243,19 @@ export default function UsersPage() {
             <I18nText text={'Manage user accounts and their roles'} />
           </p>
         </div>
-        {hasRbac && (
-          <Button
-            onClick={() => setShowCreateModal(true)}
-            size="sm"
-            className="h-8"
-          >
-            <UserPlus className="h-4 w-4 mr-1.5" />
-            <I18nText text={'Add User'} />
-          </Button>
-        )}
+        <Button
+          onClick={() => setShowCreateModal(true)}
+          size="sm"
+          className="h-8"
+        >
+          <UserPlus className="h-4 w-4 mr-1.5" />
+          <I18nText text={'Add User'} />
+        </Button>
       </div>
 
       {error && (
         <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
           {error}
-        </div>
-      )}
-
-      {!hasRbac && (
-        <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground bg-muted/50 rounded-md">
-          <Info className="h-4 w-4 shrink-0" />
-          <span>
-            <I18nTemplate
-              text="User management features (create, edit, delete) require a {licenseLink}. Password reset is available for all admins."
-              values={{
-                licenseLink: (
-                  <Link
-                    to="/license"
-                    className="text-primary underline underline-offset-2"
-                  >
-                    <I18nText text="license or trial" />
-                  </Link>
-                ),
-              }}
-            />
-          </span>
         </div>
       )}
 
@@ -390,14 +362,12 @@ export default function UsersPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {hasRbac && (
-                          <DropdownMenuItem
-                            onClick={() => setEditingUser(user)}
-                          >
-                            <Pencil className="h-4 w-4 mr-2" />
-                            <I18nText text={'Edit'} />
-                          </DropdownMenuItem>
-                        )}
+                        <DropdownMenuItem
+                          onClick={() => setEditingUser(user)}
+                        >
+                          <Pencil className="h-4 w-4 mr-2" />
+                          <I18nText text={'Edit'} />
+                        </DropdownMenuItem>
                         {isAdmin && canUsePassword(user) && (
                           <DropdownMenuItem
                             onClick={() => setResetPasswordUser(user)}
@@ -406,7 +376,7 @@ export default function UsersPage() {
                             <I18nText text={'Reset Password'} />
                           </DropdownMenuItem>
                         )}
-                        {hasRbac && isAdmin && user.id !== currentUser?.id && (
+                        {isAdmin && user.id !== currentUser?.id && (
                           <DropdownMenuItem
                             onClick={() => handleToggleDisabled(user)}
                           >
@@ -423,16 +393,14 @@ export default function UsersPage() {
                             )}
                           </DropdownMenuItem>
                         )}
-                        {hasRbac && (
-                          <DropdownMenuItem
-                            onClick={() => setDeletingUser(user)}
-                            className="text-destructive"
-                            disabled={user.id === currentUser?.id}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            <I18nText text={'Delete'} />
-                          </DropdownMenuItem>
-                        )}
+                        <DropdownMenuItem
+                          onClick={() => setDeletingUser(user)}
+                          className="text-destructive"
+                          disabled={user.id === currentUser?.id}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          <I18nText text={'Delete'} />
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>

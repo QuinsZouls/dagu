@@ -12,7 +12,6 @@ import {
 } from '@/contexts/AuthContext';
 import { AppBarContext } from '@/contexts/AppBarContext';
 import { useConfig } from '@/contexts/ConfigContext';
-import { useHasFeature } from '@/hooks/useLicense';
 import { useI18n } from '@/i18n/I18nProvider';
 import { roleAtLeast } from '@/lib/workspaceAccess';
 import { UserRole } from '@/api/v1/schema';
@@ -66,7 +65,6 @@ export default function HomePage(): React.ReactElement {
   const config = useConfig();
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
-  const hasAudit = useHasFeature('audit');
   const canWrite =
     config.authMode !== 'builtin'
       ? config.permissions.writeDags
@@ -179,9 +177,7 @@ export default function HomePage(): React.ReactElement {
           ? [
               {
                 to: '/audit-logs',
-                label: hasAudit
-                  ? t('navigation.auditLogs')
-                  : t('home.auditLogsPro'),
+                label: t('navigation.auditLogs'),
                 description: t('home.auditLogsDescription'),
               },
             ]
@@ -235,11 +231,6 @@ export default function HomePage(): React.ReactElement {
                   },
                 ]
               : []),
-            {
-              to: '/license',
-              label: t('navigation.license'),
-              description: t('home.licenseDescription'),
-            },
           ]
         : [],
     },

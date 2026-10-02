@@ -104,11 +104,6 @@ export default function AdministrationPage(): React.ReactElement {
               },
             ]
           : []),
-        {
-          to: '/license',
-          label: t('navigation.license'),
-          description: t('home.licenseDescription'),
-        },
       ],
     },
   ].filter((section) => section.links.length > 0);
