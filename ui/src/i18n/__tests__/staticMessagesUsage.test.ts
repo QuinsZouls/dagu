@@ -231,7 +231,6 @@ const ALLOWLIST = new Set<string>([
   'Community installs can manage up to 2 API keys.',
   'computed from the exact signature input shown below. Requests with',
   'Configure Workspace',
-  'console.dagu.sh',
   'Create and test notification channels before using them in routes.',
   'Dagu uses the most specific configured scope: DAG, then workspace, then Global.',
   'DAGU-XXXX-XXXX-XXXX-XXXX',

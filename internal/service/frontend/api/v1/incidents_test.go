@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIncidentManagement_WithoutLicense proves incident endpoints are
-// reachable without any license manager injected.
-func TestIncidentManagement_WithoutLicense(t *testing.T) {
+// TestIncidentManagement_ProvidersEndpointReachable proves the incident
+// providers endpoint answers 200 when the incident service is wired.
+func TestIncidentManagement_ProvidersEndpointReachable(t *testing.T) {
 	t.Parallel()
 
 	server := test.SetupServer(t)

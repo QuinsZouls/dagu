@@ -2612,11 +2612,12 @@ tunnel:
 	})
 }
 
-// TestLoad_LegacyLicenseKeysIgnored is the proof of decision D1: a config
-// file that still contains a legacy `license:` block, together with the
-// DAGU_LICENSE* environment variables, must Load() without error and yield a
-// Config with no license behaviour. Legacy keys are silently ignored (no
-// error, no warning, no shim).
+// TestLoad_LegacyLicenseKeysIgnored is the legacy-compat guard proving
+// decision D1 — NOT a live feature test: no license behaviour exists in this
+// fork, and a config file that still carries a legacy `license:` block,
+// together with the DAGU_LICENSE* environment variables, must Load() without
+// error and yield a Config with no license surface. Legacy keys are silently
+// ignored (no error, no warning, no shim).
 func TestLoad_LegacyLicenseKeysIgnored(t *testing.T) {
 	// Subtests use t.Setenv so the parent must not call t.Parallel.
 	legacyEnv := map[string]string{

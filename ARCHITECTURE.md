@@ -36,7 +36,7 @@ validators are registered through `internal/executor/registry/`.
 
 For a first contribution, leave the distributed and optional subsystems alone:
 `internal/service/coordinator/`, `internal/service/worker/`, `internal/llm/`,
-`internal/tunnel/`, `internal/license/`, `proto/`, and most of `internal/cmn/`.
+`internal/tunnel/`, `proto/`, and most of `internal/cmn/`.
 
 ## Import rules
 

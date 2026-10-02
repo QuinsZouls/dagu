@@ -396,7 +396,6 @@ const english = {
   Connections: 'Connections',
   'Connections are configured once, then selected by Global, workspace, or DAG incident routing.':
     'Connections are configured once, then selected by Global, workspace, or DAG incident routing.',
-  'console.dagu.sh': 'console.dagu.sh',
   'Continue scanning': 'Continue scanning',
   'Coordinator Service': 'Coordinator Service',
   Copied: 'Copied',
@@ -2645,7 +2644,6 @@ const chinese = {
   Connections: '连接',
   'Connections are configured once, then selected by Global, workspace, or DAG incident routing.':
     '连接只需配置一次，随后通过全局、工作区或 DAG 事件路由进行选择。',
-  'console.dagu.sh': 'console.dagu.sh',
   'Continue scanning': '继续扫描',
   'Coordinator Service': '协调服务',
   Copied: '已复制',
@@ -4851,7 +4849,6 @@ const japanese = {
   Connections: '接続',
   'Connections are configured once, then selected by Global, workspace, or DAG incident routing.':
     '接続は一度設定され、その後グローバル、ワークスペース、またはDAGインシデントルーティングによって選択されます。',
-  'console.dagu.sh': 'console.dagu.sh',
   'Continue scanning': 'スキャンを続行',
   'Coordinator Service': 'コーディネーターサービス',
   Copied: 'コピーしました',

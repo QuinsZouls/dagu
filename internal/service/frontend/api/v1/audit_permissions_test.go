@@ -87,10 +87,10 @@ func TestAudit_RequiresManagerOrAbove(t *testing.T) {
 		ExpectStatus(http.StatusForbidden).Send(t)
 }
 
-func TestAudit_WithoutLicense(t *testing.T) {
+func TestAudit_RecordsEntriesForAdmin(t *testing.T) {
 	t.Parallel()
-	// Server with audit enabled and no license manager: audit entries are
-	// still recorded and the admin can read them back.
+	// Server with audit enabled: entries are recorded on login and the
+	// admin can read them back.
 	server := setupAuditTestServer(t)
 	adminToken := getWebhookAdminToken(t, server)
 
@@ -100,7 +100,7 @@ func TestAudit_WithoutLicense(t *testing.T) {
 
 	var list api.AuditLogsResponse
 	resp.Unmarshal(t, &list)
-	require.NotEmpty(t, list.Entries, "audit entries must be written without a license manager")
+	require.NotEmpty(t, list.Entries, "audit entries must be written")
 	foundLogin := false
 	for _, entry := range list.Entries {
 		if entry.Action == "login" {

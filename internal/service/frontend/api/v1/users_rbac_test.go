@@ -45,11 +45,11 @@ func communitySetupAdmin(t *testing.T, server test.Server) string {
 	return result.Token
 }
 
-// TestUserManagement_RBACWithoutLicense proves the end-to-end multi-user
+// TestUserManagement_MultiUserFlow proves the end-to-end multi-user
 // management flow: the admin created by first-run setup can create, inspect,
 // modify, disable and delete users — unconditionally, with no feature gate
 // anywhere in the path.
-func TestUserManagement_RBACWithoutLicense(t *testing.T) {
+func TestUserManagement_MultiUserFlow(t *testing.T) {
 	t.Parallel()
 
 	server := rbacTestServer(t)
