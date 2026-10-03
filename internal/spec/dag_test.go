@@ -3651,6 +3651,8 @@ steps:
 		}
 	}
 	require.True(t, found, "FULL_PATH env var not found")
+	// Unresolved entries are not marked as resolved root env.
+	require.Equal(t, ir.EnvSpan{}, d.RootEnvSpan)
 }
 
 func TestBuildEnvReferencesParamsOnlyMetadata(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/encoding/japanese"
 )
 
 func TestDecodeJSONRejectsTrailingText(t *testing.T) {
@@ -38,19 +39,19 @@ func TestLoadTableJSONLKeepsOrderAndReportsLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "in.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte("{\"z\": 1, \"a\": 2}\n\n{\"z\": 3, \"a\": 4}\n"), 0o600))
-	table, err := LoadTable(path, "", nil)
+	table, err := LoadTable(path, LoadOptions{Format: "", Columns: nil})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"z", "a"}, table.Columns, "JSONL keys keep their text order")
 	assert.Len(t, table.Rows, 2)
 
 	bad := filepath.Join(dir, "bad.jsonl")
 	require.NoError(t, os.WriteFile(bad, []byte("{\"a\": 1}\n\n\nnot json\n"), 0o600))
-	_, err = LoadTable(bad, "", nil)
+	_, err = LoadTable(bad, LoadOptions{Format: "", Columns: nil})
 	require.ErrorContains(t, err, "line 4 is not valid JSON")
 
 	long := filepath.Join(dir, "long.jsonl")
 	require.NoError(t, os.WriteFile(long, []byte("{\"a\": \""+strings.Repeat("x", 65<<20)+"\"}\n"), 0o600))
-	_, err = LoadTable(long, "", nil)
+	_, err = LoadTable(long, LoadOptions{Format: "", Columns: nil})
 	require.ErrorContains(t, err, "token too long")
 }
 
@@ -58,7 +59,7 @@ func TestLoadTableCSVRejectsDuplicateHeaders(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "dup.csv")
 	require.NoError(t, os.WriteFile(path, []byte("id,name,id\n1,a,2\n"), 0o600))
-	_, err := LoadTable(path, "", nil)
+	_, err := LoadTable(path, LoadOptions{Format: "", Columns: nil})
 	require.ErrorContains(t, err, `duplicate header "id" in columns 1 and 3`)
 }
 
@@ -112,4 +113,36 @@ func TestForeachAggregateWithEscapedKeyKeepsOrder(t *testing.T) {
 	table, err := DecodeRows(aggregate, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"z", "a"}, table.Columns)
+}
+
+func TestLoadTableEncodingsAndDelimiter(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sjis, err := japanese.ShiftJIS.NewEncoder().Bytes([]byte("商品;数量\nりんご;3\n"))
+	require.NoError(t, err)
+	path := filepath.Join(dir, "in.csv")
+	require.NoError(t, os.WriteFile(path, sjis, 0o600))
+	table, err := LoadTable(path, LoadOptions{Encoding: EncodingShiftJIS, Delimiter: ';'})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"商品", "数量"}, table.Columns)
+	assert.Equal(t, [][]any{{"りんご", "3"}}, table.Rows)
+
+	// Without the encoding the bytes are read as UTF-8 and the header is
+	// mangled, which is a data error, not a crash.
+	table, err = LoadTable(path, LoadOptions{Delimiter: ';'})
+	require.NoError(t, err)
+	assert.NotEqual(t, []string{"商品", "数量"}, table.Columns)
+
+	bom := filepath.Join(dir, "bom.csv")
+	require.NoError(t, os.WriteFile(bom, []byte("\xEF\xBB\xBFa,b\n1,2\n"), 0o600))
+	table, err = LoadTable(bom, LoadOptions{Encoding: EncodingUTF8BOM})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, table.Columns, "the byte order mark is dropped")
+
+	for _, name := range []string{"utf-8", "UTF8", "utf-8-bom", "shift_jis", "Shift-JIS", "sjis", "cp932", "windows-31j", "ms932", ""} {
+		_, err := ParseEncoding(name)
+		assert.NoError(t, err, name)
+	}
+	_, err = ParseEncoding("latin1")
+	require.ErrorContains(t, err, `unknown encoding "latin1": use utf-8, utf-8-bom, or shift_jis`)
 }

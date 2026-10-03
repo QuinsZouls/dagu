@@ -205,12 +205,20 @@ func (w *file) mergeMap(sheet string) (mergeFill, error) {
 // origin returns the coordinates whose value a cell shows: its own, or the
 // top-left cell of the merge region covering it.
 func (m mergeFill) origin(col, row int) (int, int) {
-	for _, reg := range m {
-		if col >= reg.C1 && col <= reg.C2 && row >= reg.R1 && row <= reg.R2 {
-			return reg.C1, reg.R1
-		}
+	if reg, ok := m.at(col, row); ok {
+		return reg.C1, reg.R1
 	}
 	return col, row
+}
+
+// at returns the merge region covering a cell, if any.
+func (m mergeFill) at(col, row int) (region, bool) {
+	for _, reg := range m {
+		if col >= reg.C1 && col <= reg.C2 && row >= reg.R1 && row <= reg.R2 {
+			return reg, true
+		}
+	}
+	return region{}, false
 }
 
 // headerLayout is where a read's header rows sit and where data begins.
@@ -294,19 +302,27 @@ func cleanHeader(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// findColumn locates a header by exact name, then case-insensitively and
-// ignoring surrounding space; near reports the loose match when exact fails.
+// findColumn locates a header by exact name, then loosely, ignoring case and
+// spacing as looseName does; near reports the loose match when exact fails.
 func findColumn(headers []string, name string) (index int, near string) {
 	for i, h := range headers {
 		if h == name {
 			return i, ""
 		}
 	}
-	want := strings.ToLower(trimSpace(name))
+	want := looseName(name)
 	for _, h := range headers {
-		if strings.ToLower(trimSpace(h)) == want {
+		if looseName(h) == want {
 			return -1, h
 		}
 	}
 	return -1, ""
+}
+
+// looseName is a column name as a loose match sees it: case folded, with
+// surrounding space removed and runs of inner space collapsed, so a name
+// that differs only in spacing is offered as the likely intent rather than
+// taken for a new column.
+func looseName(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(trimSpace(name)), " "))
 }

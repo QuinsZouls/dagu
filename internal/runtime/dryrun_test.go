@@ -5,6 +5,7 @@ package runtime_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	cmnvalue "github.com/dagucloud/dagu/v2/internal/cmn/value"
+	"github.com/dagucloud/dagu/v2/internal/executor/registry"
 	"github.com/dagucloud/dagu/v2/internal/ir"
 	"github.com/dagucloud/dagu/v2/internal/runctx"
 	"github.com/dagucloud/dagu/v2/internal/runtime"
@@ -131,4 +133,33 @@ func writeExecutable(t *testing.T, path string) {
 
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+}
+
+func TestCheckDryRunStepRunsTheExecutorHook(t *testing.T) {
+	const executorType = "dry-hook-test-9f3c2b1a"
+	var seen map[string]any
+	registry.RegisterExecutorCapabilities(executorType, registry.ExecutorCapabilities{
+		DryRunCheck: func(_ context.Context, step ir.Step) error {
+			seen = step.ExecutorConfig.Config
+			if path, _ := step.ExecutorConfig.Config["path"].(string); path == "missing.xlsx" {
+				return errors.New("field 'with.path': missing.xlsx: workbook not found")
+			}
+			return nil
+		},
+	})
+	t.Cleanup(func() { registry.UnregisterExecutorCapabilities(executorType) })
+
+	step := newStep("hook")
+	step.ExecutorConfig = ir.ExecutorConfig{Type: executorType, Config: map[string]any{
+		"path":  "missing.xlsx",
+		"later": "${steps.find.outputs.path}",
+	}}
+	err := checkDryRun(t, t.TempDir(), step, nil)
+	require.ErrorContains(t, err, "field 'with.path': missing.xlsx: workbook not found")
+	require.Equal(t, "${steps.find.outputs.path}", seen["later"], "a step output reference is left as written for the hook to skip")
+
+	step.ExecutorConfig.Config["path"] = "present.xlsx"
+	require.NoError(t, checkDryRun(t, t.TempDir(), step, nil))
+	require.NoError(t, checkDryRun(t, t.TempDir(), newStep("plain", withCommand("true")), nil),
+		"an executor without a hook is checked as before")
 }

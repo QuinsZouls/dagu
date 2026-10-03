@@ -227,7 +227,7 @@ func rowIsEmpty(grid [][]string, row, c1, c2 int) bool {
 	return true
 }
 
-func sortedKeys(m map[string]any) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

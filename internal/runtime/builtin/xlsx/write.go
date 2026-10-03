@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger"
@@ -67,9 +68,9 @@ func newWriteExecutor(env runtime.Env, op, path string, cfg config) (*writeExecu
 	return e, nil
 }
 
-// keepArtifact copies the saved workbook into the run's artifacts and
+// keepArtifact copies the file a writer saved into the run's artifacts and
 // returns its path relative to the artifacts directory.
-func (e *writeExecutor) keepArtifact() (string, error) {
+func (e *writeExecutor) keepArtifact(saved string) (string, error) {
 	if e.artifacts == nil {
 		return "", nil
 	}
@@ -77,8 +78,8 @@ func (e *writeExecutor) keepArtifact() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create artifact directory: %w", err)
 	}
-	name := filepath.Base(e.path)
-	data, err := os.ReadFile(e.path)
+	name := filepath.Base(saved)
+	data, err := os.ReadFile(saved) //nolint:gosec // the file the step just wrote
 	if err != nil {
 		return "", fmt.Errorf("copy workbook to artifacts: %w", err)
 	}
@@ -113,16 +114,16 @@ func (e *writeExecutor) Run(ctx context.Context) error {
 	e.cancel = cancel
 	e.mu.Unlock()
 
-	result, line, err := e.run(ctx)
-	if err == nil && !result.DryRun {
-		// The workbook is already saved at this point. A failed copy must
-		// not fail the step, or a retry would append the same rows again;
-		// it is reported as a warning instead.
-		switch artifact, copyErr := e.keepArtifact(); {
+	out, err := e.run(ctx)
+	if err == nil && out.saved != "" {
+		// The file is already saved at this point. A failed copy must not
+		// fail the step, or a retry would append the same rows again; it is
+		// reported as a warning instead.
+		switch artifact, copyErr := e.keepArtifact(out.saved); {
 		case copyErr != nil:
-			result.Warnings = append(result.Warnings, "workbook saved but not kept as an artifact: "+copyErr.Error())
+			out.warnings = append(out.warnings, "file saved but not kept as an artifact: "+copyErr.Error())
 		case artifact != "":
-			result.Artifact = artifact
+			out.outputs["artifact"] = artifact
 		}
 	}
 	e.mu.Lock()
@@ -131,21 +132,41 @@ func (e *writeExecutor) Run(ctx context.Context) error {
 		e.exitCode = 1
 		return err
 	}
-	e.outputs = map[string]any{
-		"path":     result.Path,
-		"sheet":    result.Sheet,
-		"changes":  result.Changes,
-		"dry_run":  result.DryRun,
-		"warnings": result.Warnings,
-	}
-	if result.Artifact != "" {
-		e.outputs["artifact"] = result.Artifact
-	}
-	for _, w := range result.Warnings {
+	out.outputs["warnings"] = out.warnings
+	e.outputs = out.outputs
+	for _, w := range out.warnings {
 		_, _ = fmt.Fprintln(e.stderr, "warning: "+w)
 	}
-	_, _ = fmt.Fprintln(e.stdout, line)
+	_, _ = fmt.Fprintln(e.stdout, out.line)
 	return nil
+}
+
+// outcome is what one writer operation produced.
+type outcome struct {
+	outputs  map[string]any
+	line     string
+	warnings []string
+	// saved is the file to keep as an artifact; empty when nothing was
+	// written, as in a dry run or a skipped sheet operation.
+	saved string
+}
+
+// writerOutcome is the outcome of an operation that returns a WriteResult.
+func writerOutcome(result *workbook.WriteResult, line string, saved bool) outcome {
+	out := outcome{
+		outputs: map[string]any{
+			"path":    result.Path,
+			"sheet":   result.Sheet,
+			"changes": result.Changes,
+			"dry_run": result.DryRun,
+		},
+		line:     line,
+		warnings: result.Warnings,
+	}
+	if saved && !result.DryRun {
+		out.saved = result.Path
+	}
+	return out
 }
 
 // lockLog reports lock retries to the step log and the run log.
@@ -168,19 +189,19 @@ func (e *writeExecutor) loadTable() (workbook.Table, error) {
 	if err != nil {
 		return workbook.Table{}, err
 	}
-	table, err := workbook.LoadTable(input, e.cfg.Format, e.cfg.Columns)
+	table, err := workbook.LoadTable(input, workbook.LoadOptions{Format: e.cfg.Format, Columns: e.cfg.Columns, Encoding: e.cfg.encoding, Delimiter: e.cfg.delimiter})
 	if err != nil {
 		return workbook.Table{}, fmt.Errorf("%w: %v", errConfig, err)
 	}
 	return table, nil
 }
 
-func (e *writeExecutor) run(ctx context.Context) (*workbook.WriteResult, string, error) {
+func (e *writeExecutor) run(ctx context.Context) (outcome, error) {
 	switch e.op {
 	case opWrite, opAppend:
 		table, err := e.loadTable()
 		if err != nil {
-			return nil, "", err
+			return outcome{}, err
 		}
 		opts := e.cfg.writeOptions(e.lockLog(ctx))
 		var result *workbook.WriteResult
@@ -190,30 +211,119 @@ func (e *writeExecutor) run(ctx context.Context) (*workbook.WriteResult, string,
 			result, err = workbook.Write(ctx, e.path, table, opts)
 		}
 		if err != nil {
-			return nil, "", err
+			return outcome{}, err
 		}
 		verb := "Wrote"
 		if e.op == opAppend || opts.Mode == workbook.WriteAppend {
 			verb = "Appended"
 		}
-		return result, summaryLine(verb, result), nil
+		return writerOutcome(result, summaryLine(verb, result), true), nil
 	case opUpdateRows:
 		rows, err := workbook.DecodeUpdateRows(e.cfg.Rows)
 		if err != nil {
-			return nil, "", fmt.Errorf("%w: %v", errConfig, err)
+			return outcome{}, fmt.Errorf("%w: %v", errConfig, err)
 		}
 		result, err := workbook.UpdateRows(ctx, e.path, e.cfg.updateOptions(rows, e.lockLog(ctx)))
 		if err != nil {
-			return nil, "", err
+			return outcome{}, err
 		}
 		line := summaryLine("Updated", result)
 		if result.Changes.RowsAppended > 0 {
 			line += fmt.Sprintf(" (%d rows appended)", result.Changes.RowsAppended)
 		}
-		return result, line, nil
+		return writerOutcome(result, line, true), nil
+	case opWriteCells:
+		output, err := e.outputPath()
+		if err != nil {
+			return outcome{}, err
+		}
+		result, err := workbook.WriteCells(ctx, e.path, e.cfg.writeCellsOptions(output, e.lockLog(ctx)))
+		if err != nil {
+			return outcome{}, err
+		}
+		n := result.Changes.CellsChanged
+		line := fmt.Sprintf("Wrote %d %s to %s %s", n, plural(n, "cell"), workbook.Base(result.Path), result.Sheet)
+		if result.DryRun {
+			line += " (dry run)"
+		}
+		return writerOutcome(result, line, true), nil
+	case opSheet:
+		result, err := workbook.Sheet(ctx, e.path, e.cfg.sheetOptions(e.lockLog(ctx)))
+		if err != nil {
+			return outcome{}, err
+		}
+		out := writerOutcome(&result.WriteResult, sheetLine(e.cfg, result), !result.Skipped)
+		out.outputs["sheets"] = result.Sheets
+		return out, nil
+	case opConvert:
+		output, err := e.outputPath()
+		if err != nil {
+			return outcome{}, err
+		}
+		result, err := workbook.Convert(ctx, e.path, e.cfg.convertOptions(output))
+		if err != nil {
+			return outcome{}, err
+		}
+		return outcome{
+			outputs: map[string]any{
+				"path":   result.Path,
+				"format": result.Format,
+				"count":  result.Count,
+				"sheet":  result.Sheet,
+				"range":  result.Range,
+			},
+			line:     fmt.Sprintf("Converted %d %s from %s %s to %s", result.Count, plural(result.Count, "row"), workbook.Base(e.path), result.Range, workbook.Base(result.Path)),
+			warnings: result.Warnings,
+			saved:    result.Path,
+		}, nil
 	default:
-		return nil, "", fmt.Errorf("%w: unsupported operation %q", errConfig, e.op)
+		return outcome{}, fmt.Errorf("%w: unsupported operation %q", errConfig, e.op)
 	}
+}
+
+// outputPath resolves the output option against the working directory, or
+// returns empty when there is none.
+func (e *writeExecutor) outputPath() (string, error) {
+	if strings.TrimSpace(e.cfg.Output) == "" {
+		return "", nil
+	}
+	return resolvePath(e.workDir, e.cfg.Output)
+}
+
+// sheetLine describes a sheet operation in one line.
+func sheetLine(cfg config, result *workbook.SheetResult) string {
+	book := workbook.Base(result.Path)
+	operation := workbook.SheetOperation(strings.ToLower(strings.TrimSpace(cfg.Operation)))
+	var line string
+	switch {
+	case result.Skipped:
+		// A source that was not found has no result name; the one asked
+		// for is what the reader recognizes.
+		name := result.Sheet
+		if name == "" {
+			name = cfg.Sheet
+		}
+		line = fmt.Sprintf("Sheet %q left as it is in %s; skipped", name, book)
+	case operation == workbook.SheetAdd:
+		line = fmt.Sprintf("Added sheet %q to %s", result.Sheet, book)
+	case operation == workbook.SheetCopy:
+		line = fmt.Sprintf("Copied sheet %q to %q in %s", cfg.Sheet, result.Sheet, book)
+	case operation == workbook.SheetRename:
+		line = fmt.Sprintf("Renamed sheet %q to %q in %s", cfg.Sheet, result.Sheet, book)
+	default:
+		line = fmt.Sprintf("Deleted sheet %q from %s", result.Sheet, book)
+	}
+	if result.DryRun && !result.Skipped {
+		line += " (dry run)"
+	}
+	return line
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return noun
+	}
+	return noun + "s"
 }
 
 func summaryLine(verb string, result *workbook.WriteResult) string {

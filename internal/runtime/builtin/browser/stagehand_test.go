@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -221,6 +223,79 @@ func TestStagehandActRecordsReplayableActions(t *testing.T) {
 		assert.True(t, replayed)
 	}
 	assert.Equal(t, requests, model.requestCount(), "replay makes no model call")
+}
+
+// A recorded element still on the page but hidden, such as a field in a
+// closed dialog, fails the replay. The runtime would otherwise type into it
+// and report success.
+func TestStagehandReplayHiddenElement(t *testing.T) {
+	t.Parallel()
+
+	eng := launchBrowser(t, launchOptions{Generate: (&shopModel{}).generate})
+	require.NoError(t, eng.Goto(t.Context(), `data:text/html,<dialog><input></dialog><input>`, time.Minute))
+	typeInto := func(selector string) recordedAction {
+		return recordedAction{Selector: selector, Method: "type", Arguments: []string{"10"}}
+	}
+
+	replayed, err := eng.Replay(t.Context(), typeInto("xpath=/html/body/dialog[1]/input[1]"), nil, time.Minute)
+	require.NoError(t, err)
+	assert.False(t, replayed, "the field in the closed dialog is hidden")
+
+	replayed, err = eng.Replay(t.Context(), typeInto("xpath=/html/body/input[1]"), nil, time.Minute)
+	require.NoError(t, err)
+	assert.True(t, replayed, "the field outside the dialog is visible")
+}
+
+// menuPage adds an Approve button once its menu is opened.
+const menuPage = `<p id="status">pending</p>
+<button onclick="openMenu()">Open menu</button>
+<script>
+function openMenu() {
+	const approve = document.createElement("button");
+	approve.textContent = "Approve";
+	approve.onclick = () => { document.getElementById("status").textContent = "approved"; };
+	document.body.append(approve);
+}
+</script>`
+
+var menuButtonPattern = regexp.MustCompile(`\[(\d+-\d+)\] button: (Open menu|Approve)`)
+
+// An act performs one action even when the model asks to follow it with
+// another, which the runtime would otherwise ask for and perform as well.
+func TestStagehandActPerformsOneAction(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	// The model clicks Approve once the page shows it, and Open menu before,
+	// and always asks for a second action.
+	model := func(_ context.Context, req generateRequest) (generateResponse, error) {
+		requests.Add(1)
+		text := ""
+		for _, message := range req.Messages {
+			text += message.Text
+		}
+		buttons := map[string]string{}
+		for _, match := range menuButtonPattern.FindAllStringSubmatch(text, -1) {
+			buttons[match[2]] = match[1]
+		}
+		id, ok := buttons["Approve"]
+		if !ok {
+			id = buttons["Open menu"]
+		}
+		answer := fmt.Sprintf(`{"action":{"elementId":%q,"description":"menu button","method":"click","arguments":[]},"twoStep":true}`, id)
+		return generateResponse{JSON: json.RawMessage(answer)}, nil
+	}
+	eng := launchBrowser(t, launchOptions{Generate: model})
+	require.NoError(t, eng.Goto(t.Context(), "data:text/html,"+url.PathEscape(menuPage), 30*time.Second))
+
+	outcome, err := eng.Act(t.Context(), "Open the menu", nil, time.Minute)
+	require.NoError(t, err)
+	require.True(t, outcome.Success, outcome.Message)
+	assert.Len(t, outcome.Actions, 1)
+	assert.EqualValues(t, 1, requests.Load(), "no model request for a second action")
+	text, err := eng.PageText(t.Context())
+	require.NoError(t, err)
+	assert.Contains(t, text, "pending", "Approve is not clicked")
 }
 
 // The runtime reports a detached page session in a failed act result when
@@ -428,7 +503,10 @@ func TestStagehandDocumentID(t *testing.T) {
 }
 
 // The process ID a launched browser reports is the browser itself: ending it
-// closes the browser.
+// closes the browser. Ending any other process would leave the browser
+// answering. A browser that was ended refuses connections, or, on Windows
+// while the process is still being torn down, accepts them without
+// answering, so a refusal or a timeout counts; any reply does not.
 func TestStagehandReportsBrowserProcess(t *testing.T) {
 	t.Parallel()
 
@@ -438,9 +516,12 @@ func TestStagehandReportsBrowserProcess(t *testing.T) {
 	process, err := os.FindProcess(handle.BrowserPID)
 	require.NoError(t, err)
 	require.NoError(t, process.Kill())
-	require.Eventually(t, func() bool {
-		return errors.Is(browserhost.Probe(context.Background(), handle.CDPURL), browserhost.ErrUnreachable)
-	}, 10*time.Second, 200*time.Millisecond, "the browser stops answering")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		err := browserhost.Probe(context.Background(), handle.CDPURL)
+		var netErr net.Error
+		stopped := errors.Is(err, browserhost.ErrUnreachable) || (errors.As(err, &netErr) && netErr.Timeout())
+		assert.True(c, stopped, "the browser stops answering; last probe: %v", err)
+	}, 10*time.Second, 200*time.Millisecond)
 }
 
 // dialogPage opens an alert, a confirm, and a prompt while it loads, and

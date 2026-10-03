@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,14 +30,38 @@ func warnDryRunStep(ctx context.Context, node *Node) {
 	}
 }
 
-// checkDryRunStep reports the executable-access failures a local command step
-// would hit if it ran on this host now — a shell that is not on PATH, a
-// command name that does not resolve, or a command path that is not
-// executable — without running the step. Steps whose executor runs off the
-// host (containers, SSH, remote jobs) are skipped because their commands
-// resolve in an environment the dry run cannot observe.
+// checkDryRunStep reports what a dry run can tell would fail if the step ran
+// on this host now, without running the step: the executable-access failures
+// of a local command step, and whatever check the step's executor registers,
+// such as a workbook that does not exist. Every problem found is reported.
 func checkDryRunStep(ctx context.Context, step ir.Step) error {
 	caps := registry.ExecutorCapabilitiesFor(step.ExecutorConfig.Type)
+	return errors.Join(dryRunHook(ctx, step, caps), checkDryRunCommands(ctx, step, caps))
+}
+
+// dryRunHook runs the executor's own dry-run check, when it registers one,
+// over the step's with fields resolved as far as a dry run can: params and
+// environment resolve, while a reference to a step output, which no step
+// has produced in a dry run, is left as written for the check to skip.
+func dryRunHook(ctx context.Context, step ir.Step, caps registry.ExecutorCapabilities) error {
+	if caps.DryRunCheck == nil {
+		return nil
+	}
+	resolved, err := resolverWithoutNotices(GetEnv(ctx)).Object(ctx, step.ExecutorConfig.Config, cmnvalue.ExecutorConfigField("with"))
+	if err == nil {
+		if config, err := objectAsConfig(resolved); err == nil {
+			step.ExecutorConfig.Config = config
+		}
+	}
+	return caps.DryRunCheck(ctx, step)
+}
+
+// checkDryRunCommands reports the executable-access failures a local command
+// step would hit — a shell that is not on PATH, a command name that does not
+// resolve, or a command path that is not executable. Steps whose executor
+// runs off the host (containers, SSH, remote jobs) are skipped because their
+// commands resolve in an environment the dry run cannot observe.
+func checkDryRunCommands(ctx context.Context, step ir.Step, caps registry.ExecutorCapabilities) error {
 	if caps.CommandContext == nil {
 		return nil
 	}

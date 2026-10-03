@@ -1760,7 +1760,7 @@
         "output_schema": {
           "type": "object",
           "additionalProperties": true,
-          "description": "Inline JSON Schema object used to validate stdout JSON before publishing step output."
+          "description": "Inline JSON Schema object used to validate stdout JSON before publishing step output. On a chat.completion step the model answers in this shape: the schema needs type: object and at least one property, and only the listed properties are published."
         },
         "outputs": {
           "type": "array",
@@ -2643,7 +2643,7 @@
         },
         {
           "if": {
-            "properties": { "action": { "enum": ["xlsx.read", "xlsx.info", "xlsx.list_sheets", "xlsx.write", "xlsx.append", "xlsx.update_rows"] } },
+            "properties": { "action": { "enum": ["xlsx.read", "xlsx.info", "xlsx.list_sheets", "xlsx.write", "xlsx.append", "xlsx.update_rows", "xlsx.validate", "xlsx.write_cells", "xlsx.sheet", "xlsx.convert", "xlsx.extract"] } },
             "required": ["action"]
           },
           "then": {
@@ -2674,6 +2674,86 @@
           "then": {
             "properties": {
               "with": { "required": ["key", "rows"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "xlsx.validate" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": {
+                "anyOf": [
+                  { "required": ["required"] },
+                  { "required": ["not_blank"] },
+                  { "required": ["unique"] },
+                  { "required": ["types"] },
+                  { "required": ["allowed"] }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "xlsx.write_cells" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": { "required": ["cells"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "xlsx.sheet" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": { "required": ["operation", "sheet"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": { "const": "xlsx.sheet" },
+              "with": {
+                "properties": { "operation": { "enum": ["copy", "rename"] } },
+                "required": ["operation"]
+              }
+            },
+            "required": ["action", "with"]
+          },
+          "then": {
+            "properties": {
+              "with": { "required": ["to"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "xlsx.convert" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": { "required": ["output"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "xlsx.extract" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "with": { "required": ["instruction", "schema"] }
             }
           }
         },
@@ -4073,7 +4153,7 @@
         "provider": {
           "type": "string",
           "enum": ["google", "microsoft", "imap"],
-          "description": "Sets the default IMAP and SMTP servers. Defaults to imap, which requires imap.host."
+          "description": "Sets the default IMAP and SMTP servers. Defaults to imap, which requires imap.host. A google account with oauth uses the Gmail API instead and takes no imap, smtp, or username."
         },
         "imap": {
           "$ref": "#/definitions/mailServer",
@@ -4099,6 +4179,19 @@
         { "required": ["password"] },
         { "required": ["oauth"] }
       ],
+      "if": {
+        "properties": { "provider": { "const": "google" } },
+        "required": ["provider", "oauth"]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["imap"] },
+            { "required": ["smtp"] },
+            { "required": ["username"] }
+          ]
+        }
+      },
       "description": "A mailbox that mail actions read from and send through."
     },
     "mailServer": {
@@ -4132,7 +4225,7 @@
         "provider": {
           "type": "string",
           "enum": ["google_refresh", "microsoft_refresh"],
-          "description": "Refresh-token provider."
+          "description": "Refresh-token provider. A google_refresh grant needs https://www.googleapis.com/auth/gmail.modify or https://mail.google.com/, with the Gmail API enabled in the client's Google Cloud project."
         },
         "tenant_id": {
           "type": "string",
@@ -6604,11 +6697,16 @@
             "wait.http",
             "wait.until",
             "xlsx.append",
+            "xlsx.convert",
+            "xlsx.extract",
             "xlsx.info",
             "xlsx.list_sheets",
             "xlsx.read",
+            "xlsx.sheet",
             "xlsx.update_rows",
-            "xlsx.write"
+            "xlsx.validate",
+            "xlsx.write",
+            "xlsx.write_cells"
           ],
           "description": "Builtin action name."
         },
@@ -7455,7 +7553,7 @@
         "allowed_domains": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
-          "description": "Domains the browser may navigate to, such as example.com or *.example.com."
+          "description": "Hosts the page's HTTP(S) requests may reach, such as example.com or *.example.com. List the CDN and sign-in hosts the site loads from."
         },
         "screenshots": {
           "type": "string",
@@ -7554,7 +7652,7 @@
                 "instruction": { "type": "string", "minLength": 1 },
                 "cache": {
                   "type": "boolean",
-                  "description": "Replay recorded actions for this operation. Defaults to with.cache."
+                  "description": "Set false to disable the replay cache for this operation. Has no effect when with.cache is false."
                 }
               }
             }
@@ -7784,7 +7882,7 @@
                 "instruction": { "type": "string", "minLength": 1 },
                 "cache": {
                   "type": "boolean",
-                  "description": "Replay recorded actions for this operation. Defaults to with.cache."
+                  "description": "Set false to disable the replay cache for this operation. Has no effect when with.cache is false."
                 },
                 "max_actions": {
                   "type": "integer",
@@ -8013,10 +8111,18 @@
           "additionalProperties": {
             "oneOf": [
               { "type": "string", "minLength": 1 },
-              { "type": "object", "properties": { "value": {} }, "required": ["value"], "additionalProperties": false }
+              {
+                "type": "object",
+                "properties": {
+                  "value": {},
+                  "type": { "type": "string", "enum": ["string", "number", "integer", "boolean", "date", "datetime"] }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+              }
             ]
           },
-          "description": "Columns to write for xlsx.update_rows: {Status: status} takes the status field of each row, {Reviewed: {value: yes}} writes one literal to every row. Omitted: every field other than the key and _row goes to the column of the same name. A column missing from the header is added at the right."
+          "description": "Columns to write for xlsx.update_rows: {Status: status} takes the status field of each row, {Reviewed: {value: yes}} writes one literal to every row; a literal that is text in the canonical form of a number is written as a number unless type: string pins it. Omitted: every field other than the key and _row goes to the column of the same name. A column missing from the header is added at the right."
         },
         "missing": {
           "type": "string",
@@ -8026,10 +8132,130 @@
         "artifact": {
           "oneOf": [{ "type": "boolean" }, { "type": "string" }],
           "description": "Keep a copy of the saved workbook with the run's artifacts, under xlsx/<step>/, so it is listed with the run. Enables artifact storage for the DAG."
+        },
+        "required": {
+          "oneOf": [{ "type": "array", "items": { "type": "string", "minLength": 1 } , "minItems": 1 }, { "type": "string" }],
+          "description": "xlsx.validate: columns the header row must have."
+        },
+        "not_blank": {
+          "oneOf": [{ "type": "array", "items": { "type": "string", "minLength": 1 } , "minItems": 1 }, { "type": "string" }],
+          "description": "xlsx.validate: columns no row may leave empty."
+        },
+        "unique": {
+          "oneOf": [{ "type": "array", "items": { "type": "string", "minLength": 1 } , "minItems": 1 }, { "type": "string" }],
+          "description": "xlsx.validate: columns whose values may not repeat; empty cells are skipped."
+        },
+        "allowed": {
+          "type": "object",
+          "additionalProperties": { "type": "array" },
+          "minProperties": 1,
+          "description": "xlsx.validate: the values each column may hold, such as {Status: [Open, Done]}; empty cells are skipped."
+        },
+        "on_problem": {
+          "type": "string",
+          "enum": ["warn", "fail"],
+          "description": "What xlsx.validate does when it finds problems: warn (default) succeeds and publishes them, fail fails the step after listing them."
+        },
+        "max_problems": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "string" }],
+          "description": "Most problems xlsx.validate keeps, 1 or more. Defaults to 1000; count still reports every problem found."
+        },
+        "cells": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "oneOf": [
+              { "not": { "type": ["object", "array"] } },
+              {
+                "type": "object",
+                "properties": {
+                  "value": {},
+                  "type": { "type": "string", "enum": ["string", "number", "integer", "boolean", "date", "datetime"] }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": { "formula": { "type": "string", "minLength": 1 } },
+                "required": ["formula"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "xlsx.write_cells: cell addresses to write, such as {B2: Acme, Sheet1!D7: 2026-10-01, Total: {formula: SUM(E2:E9)}}. A value writes the cell, null clears it, {value: v, type: t} pins its type, {formula: text} writes a formula. An address is a cell, Sheet!cell, or a defined name for one cell."
+        },
+        "output": {
+          "type": "string",
+          "minLength": 1,
+          "description": "xlsx.write_cells: workbook to write the result to, leaving path as it was. xlsx.convert: the csv, json, or jsonl file to write."
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["add", "copy", "rename", "delete"],
+          "description": "What xlsx.sheet does: add a sheet named sheet, copy sheet to to, rename sheet to to, or delete sheet."
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "xlsx.sheet: the new name for copy and rename."
+        },
+        "if_exists": {
+          "type": "string",
+          "enum": ["fail", "skip", "replace"],
+          "description": "What xlsx.sheet does when the sheet to create already exists: fail (default), skip with a warning, or replace its contents."
+        },
+        "position": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "string" }],
+          "description": "xlsx.sheet: 1-based position of the sheet add or copy creates; by default an added sheet goes last and a copy right after its source."
+        },
+        "encoding": {
+          "type": "string",
+          "enum": ["utf-8", "utf-8-bom", "shift_jis", "cp932", "windows-31j", "sjis", "ms932"],
+          "description": "Encoding of a csv file: the input of xlsx.write and xlsx.append, or the output of xlsx.convert. utf-8 (default), utf-8-bom, or shift_jis (also cp932)."
+        },
+        "delimiter": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1,
+          "description": "Field separator of a csv file, one character; a comma by default."
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "description": "xlsx.extract: what to find on the sheet, in plain words. A model answers with the cell that holds each schema property; the step reads the values from those cells. Required."
+        },
+        "schema": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": { "const": "object" },
+                "properties": { "type": "object" }
+              },
+              "required": ["type"]
+            },
+            { "type": "string" }
+          ],
+          "description": "xlsx.extract: a JSON Schema with type: object whose top-level properties name the fields to find; each becomes a step output holding the typed value of the cell the model named. A property type of number, integer, boolean, or string (with format date or date-time) pins how its cell is read. A string is a value reference resolved to the schema at run time. Required."
+        },
+        "send_values": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "default": true,
+          "description": "xlsx.extract: send the text of every listed cell to the model (default). false lists non-text cells by their kind only, so amounts and dates stay on the host."
+        },
+        "cache": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "default": true,
+          "description": "xlsx.extract: keep the cells the model named, by sheet layout, so a later run of the same layout reads them without a model call."
+        },
+        "llm": {
+          "$ref": "#/definitions/standardLLMConfig",
+          "description": "xlsx.extract: model for this step. Replaces the DAG-level llm block entirely."
         }
       },
       "required": ["path"],
-      "description": "Configuration for action: xlsx.read, xlsx.info, xlsx.list_sheets, xlsx.write, xlsx.append, and xlsx.update_rows."
+      "description": "Configuration for action: xlsx.read, xlsx.info, xlsx.list_sheets, xlsx.write, xlsx.append, xlsx.update_rows, xlsx.validate, xlsx.write_cells, xlsx.sheet, xlsx.convert, and xlsx.extract."
     },
     "fileActionConfig": {
       "type": "object",

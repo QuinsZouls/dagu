@@ -19,7 +19,7 @@ Load only the reference file that matches the task.
 - Prefer `dagu schema ...` and `dagu validate ...` over guessing field names or shapes.
 - Prefer `action: template.render` when generating text files, prompts, or artifacts instead of assembling them with shell `echo` or heredocs.
 - Prefer `file.*` actions for local file operations such as stat, read, write, copy, move, delete, mkdir, and list instead of shelling out to `cp`, `mv`, `rm`, or `mkdir`.
-- Prefer `xlsx.*` actions for `.xlsx` workbooks: `xlsx.read` for rows, `xlsx.write` or `xlsx.append` for reports, and `xlsx.update_rows` to write per-row results back, instead of a Python or PowerShell script. Inspect a workbook first with `dagu xlsx inspect` or the MCP `workbook` read target.
+- Prefer `xlsx.*` actions for `.xlsx` workbooks: `xlsx.read` for rows, `xlsx.validate` before acting on them, `xlsx.write` or `xlsx.append` for reports, `xlsx.update_rows` to write per-row results back, `xlsx.write_cells` to fill a template, `xlsx.sheet` to manage sheets, `xlsx.convert` to hand a sheet to a tool that reads CSV, and `xlsx.extract` to read named fields out of a form-like sheet whose layout differs by sender, instead of a Python or PowerShell script. Inspect a workbook first with `dagu xlsx inspect` or the MCP `workbook` read target.
 - Prefer `git.worktree.add` and `git.worktree.remove` when steps need isolated branches inside an existing local Git repository. Add an explicit remove step when the workflow should delete the worktree.
 - Prefer `stdout.artifact` / `stderr.artifact` when a command stream should become a DAG-run artifact, especially for large reports, JSON, Markdown, logs, or generated files.
 - Prefer `artifact.*` actions for explicit artifact reads/writes/lists. Use `DAG_RUN_ARTIFACTS_DIR` only when a tool truly needs a filesystem path inside the step.
@@ -209,7 +209,7 @@ Complete the task from a local CLI context with `dagu human-task complete --run-
 
 Load only the file you need:
 
-- `references/steptypes.md` when choosing an action or checking action-specific behavior such as `human.task`, `dag.run`, `parallel`, `git.worktree.*`, `jq.filter`, `file.*`, `xlsx.*`, `state.*`, `template.render`, `browser.*`, or `computer.*`
+- `references/steptypes.md` when choosing an action or checking action-specific behavior such as `human.task`, `dag.run`, `parallel`, `git.worktree.*`, `jq.filter`, `file.*`, `xlsx.*`, `state.*`, `template.render`, `chat.completion`, `browser.*`, or `computer.*`
 - `references/dagu-action.md` when creating a reusable `dagu-action.yaml` package or checking action input/output schema behavior
 - `references/cli.md` when choosing or using Dagu CLI commands, including workflow inspection, execution, and cleanup operations
 - `references/context.md` when using `${context.*}` metadata references or declared step `outputs:`
@@ -956,12 +956,18 @@ from `mail.search`): `to` defaults to its Reply-To or sender, `subject` to
 
 ## mail.search / mail.organize
 
-Read and organize a mailbox over IMAP. Accounts live in the DAG-level (or base
+Read and organize a mailbox over IMAP or, for a Google account signed in with
+OAuth, the Gmail API. Accounts live in the DAG-level (or base
 config) `mail_accounts` map, keyed by email address. `provider: google` or
 `provider: microsoft` fills in the servers; any other server sets `imap.host`.
 Authenticate with `password` or with `oauth` (`google_refresh` or
 `microsoft_refresh` and a refresh token). `microsoft_refresh` accepts optional
-`scopes` to request instead of `https://outlook.office.com/.default`.
+`scopes` to request instead of `https://outlook.office.com/.default`. A
+`provider: google` account with `oauth` uses the Gmail API instead of IMAP and
+SMTP: it takes no `imap`, `smtp`, or `username`, folders are Gmail labels, and
+its grant needs `https://www.googleapis.com/auth/gmail.modify` or
+`https://mail.google.com/`, and the Google Cloud project of `client_id` must have
+the Gmail API enabled.
 
 ```yaml
 mail_accounts:
@@ -1009,7 +1015,7 @@ first, each with `id`, `message_id`, `folder`, `from_name`, `from_address`, `to`
 mark it read inside the loop right after its work, so a failed email stays
 unread for the next run.
 
-## xlsx.read / xlsx.info / xlsx.list_sheets / xlsx.write / xlsx.append / xlsx.update_rows
+## xlsx.read / xlsx.info / xlsx.list_sheets / xlsx.write / xlsx.append / xlsx.update_rows / xlsx.validate / xlsx.write_cells / xlsx.sheet / xlsx.convert / xlsx.extract
 
 Read and write `.xlsx` workbooks without a spreadsheet application, on any
 platform. The pattern a per-row job needs is: read the rows still to do, act on
@@ -1040,8 +1046,6 @@ steps:
         order_id: ${foreach.item.order_id}
         status: ${steps.submit.outputs.status_code}
     output: RESULTS
-    continue_on:
-      failure: true
   - id: mark
     depends: each
     action: xlsx.update_rows
@@ -1049,17 +1053,20 @@ steps:
       path: ~/Inbox/orders.xlsx
       sheet: Orders
       key: order_id
-      rows: ${steps.each.outputs.RESULTS}
+      rows: ${RESULTS}
       set: {Status: status}
       wait_for_unlock: 5m
 ```
 
 The loop's `collect` builds one object per row with the key and the result
-fields, and `rows` accepts the foreach aggregate directly: its `outputs` list,
-the collected objects of the item bodies that succeeded, is what gets written
-back. `continue_on.failure` on the loop lets the write-back run when some
-rows failed, so the rows that did succeed are marked and are not submitted
-again on the next run; the run still reports the failure.
+fields, and `rows` accepts the foreach aggregate directly: a string-form
+`output: RESULTS` is the variable `${RESULTS}`, and its `outputs` list is
+what gets written back. `http.request` fails on a response outside 2xx, so a
+rejected order fails its item body; the loop is then partially succeeded,
+the aggregate lists the failed items and holds only the successful bodies in
+`outputs`, and the write-back marks the rows that succeeded. The rejected
+rows keep an empty Status, so the next run submits only them; the run ends
+partially succeeded.
 
 `xlsx.read` `with` fields: `path`, `password`, `sheet` (first sheet by default,
 matched case-insensitively), `range` (`A2:F`, `Sheet1!A2:F`, a named range, or a
@@ -1094,18 +1101,28 @@ names scoped to it, and formulas elsewhere that refer to it stay valid; its
 merged regions and tables are removed. Other sheets, widths, styles, and
 defined names are untouched. ISO date strings become real dates. `xlsx.append` adds rows below the last used row,
 copying the style of the cell above, and writes a header only when the sheet is
-empty.
+empty. Appended fields are placed under the header cell of the same exact name:
+a loose match fails with `did you mean`, a name the header lacks adds a column
+at the right, and `header: false` writes rows by position onto a sheet with no
+header row. An append fails when a cell it would write, or the header cell of
+a new column, lies in a merged cell.
 
 `xlsx.update_rows` `with` fields: `path`, `sheet`, `key` (the column that
 identifies a row, or `_row`), `rows`, `set` (`{Status: status}` takes a field of
-each row, `{Reviewed: {value: yes}}` writes one literal; omitted, every field
+each row, `{Reviewed: {value: yes}}` writes one literal, and a literal that is
+text in the canonical form of a number such as `"100"` is written as a number
+unless `type: string` pins it; omitted, every field
 other than the key and `_row` goes to the column of the same name), `missing`
 (`fail`, `skip`, or `append`), `atomic`, `dry_run`, `wait_for_unlock`,
 `artifact`. Columns the sheet lacks are added at the right. Two checks run
 before any cell is written and cannot be turned off: the key column and every
 existing `set` column must still be in the header row by name, and a row
 addressed by `_row` must still hold its key there. Either failure fails the
-step with the file untouched.
+step with the file untouched. A merged cell, such as one Status over the
+lines of an order, is written once at its top-left cell: rows may give it
+the same value, different values fail the step, and a merged cell reaching
+outside its column's data rows is refused. A row appended with `missing:
+append`, or a new column, that would land in a merged cell fails the step.
 
 Every writer publishes `path`, `sheet`, `changes` (`{sheet, range, rows_updated,
 rows_appended, columns_added, cells_changed}`), `dry_run`, and `warnings`.
@@ -1116,6 +1133,104 @@ nobody holds is only a warning; `wait_for_unlock: 5m` retries with backoff
 instead of failing. `artifact: true` keeps a copy of the saved workbook with
 the run's artifacts; a copy that fails after the save is a warning, not a
 failed step.
+
+`xlsx.validate` checks a sheet before a workflow acts on it. `with` fields:
+`path`, `password`, `sheet`, `range`, `header`, `columns`, `merged`, `trim`,
+`formulas`, `max_problems` (default 1000: `count` reports every problem found
+while `problems` keeps that many), and the rules `required` (columns the
+header row must have), `not_blank` (columns no non-empty row may leave empty;
+rows whose cells are all empty are skipped), `unique` (columns whose values may not repeat), `types`
+(`{Amount: number}`), and `allowed` (`{Status: [Open, Done]}`); at least one
+rule is needed. It publishes `ok`, `problems` (each with `code`:
+`missing_column`, `blank`, `type`, `duplicate`, or `not_allowed`; `sheet`,
+`cell` and `row` (absent for `missing_column`), `column`, `message`), `count`
+(the number of problems), `rows` (the number of rows checked, not the rows
+themselves), `headers`, `sheet`, `range`, `warnings`, and `truncated`, and
+lists each problem on stderr. By
+default the step succeeds with the problems published (`on_problem: warn`);
+`on_problem: fail` fails it after listing them, and a failed step publishes
+nothing. To stop and ask someone, follow it with a `human.task` step whose
+precondition is `${steps.<id>.outputs.count}` with `expected: "num:>0"` and
+`continue_on: {skipped: true}`, so a clean workbook skips the task and the
+run goes on.
+
+`xlsx.write_cells` fills a template: `cells` maps addresses (`B2`,
+`Sheet1!B2`, `'My Sheet'!B2`, or a defined name for one cell; an address
+inside a merged cell, or a name over its whole area, writes the merged cell,
+and two addresses in one merged cell fail the step) to a value, to
+`{value: v, type: t}` to pin the type, to `{formula: "=SUM(B2:B9)"}`, or to
+`null` to empty the cell. An ISO date string becomes a date, and text in the
+canonical form of a number (`100`, `-12.5`, not `007` or `1,234`) becomes a
+number, so `${foreach.item.amount}`, which arrives as text, lands as a number;
+`type: string` keeps such text. Every cell keeps its style, and a date written into
+a plain cell gains a date format. `output` writes the result to a new
+workbook, which must be a different file, and leaves `path` untouched, so one
+template serves many fills; the workbook at `path` must exist. `changes.cells_changed` counts cells that
+really changed. `dry_run`, `atomic`, `wait_for_unlock`, and `artifact` apply.
+
+`xlsx.sheet` takes `operation` (`add`, `copy`, `rename`, `delete`), `sheet`
+(the new sheet for `add`, the source for `copy`, the sheet to rename or
+delete otherwise), `to` (the new name for `copy` and `rename`), `if_exists`
+(`fail`, `skip`, or `replace` when the sheet to create exists), `missing`
+(`fail` or `skip` when the source is absent), and `position` (1-based; by
+default an added sheet goes last and a copy right after its source). It
+publishes the writer outputs plus `sheets`, the names afterwards. Rerun
+safety comes from `if_exists: skip`. A rename does not rewrite formulas on
+other sheets, a delete leaves references to the sheet dangling, and a copy
+does not carry tables, images, or charts.
+
+`xlsx.convert` exports a sheet: `path`, `output` (the file; `.csv`, `.json`,
+`.jsonl`, or `format`), the read options `sheet`, `range`, `header`,
+`columns`, `types`, `trim`, and for csv `encoding` (`utf-8`, `utf-8-bom`,
+`shift_jis`; `cp932` is accepted) and `delimiter`. Every row is written, with
+no cap; `_row` is not. It publishes `path`, `format`, `count`, `sheet`,
+`range`, `warnings`, and with `artifact: true` the file's copy. The reverse
+direction is `xlsx.write` with `input`, whose csv also takes `encoding` and
+`delimiter`.
+
+`xlsx.extract` reads fields out of a sheet laid out as a form rather than a
+table, such as a supplier's quote whose layout differs by sender. `path`,
+`instruction` (what to find), and `schema` (`type: object`, one property per
+field, each optionally `description`-ed in the sheet's own language and typed
+`string`, `number`, `integer`, `boolean`, or `string` with `format: date` or
+`date-time`), plus a model through the DAG-level `llm` block or `with.llm`.
+Optional `sheet`, `range`, `send_values` (default true; false shows non-text
+cells as their kind only), `cache` (default true), `trim`, `formulas`. A
+model is shown the sheet's non-empty cells as `B3 [text,bold]: 見積番号` and
+answers only the address of each field's cell, or null; the engine reads the
+typed value from that cell, so no value is invented. It publishes each
+property, `cells` (property to the `Sheet1!B7` it came from), `sheet`,
+`warnings`, and `source` (`model` or `cache`); do not declare outputs. The
+addresses are cached by the sheet's shape with the label beside each cell, so
+a layout seen before makes no model request as long as the instruction, the
+schema, and the labels beside the cached cells are unchanged; `dagu xlsx cache
+clear <dag>` drops the cache.
+
+```yaml
+llm:
+  provider: anthropic
+  model: claude-sonnet-5
+  api_key_name: ANTHROPIC_API_KEY
+steps:
+  - id: fields
+    action: xlsx.extract
+    with:
+      path: inbox/quote.xlsx
+      instruction: A supplier's quote. Find the quote number, the delivery date, and the total amount.
+      schema:
+        type: object
+        properties:
+          quote_no: {type: string, description: 見積番号}
+          delivery: {type: string, format: date, description: 納期}
+          total: {type: number, description: 合計金額}
+```
+
+`dagu dry` warns, without failing, when the workbook, sheet, or a column
+named by a reading, validating, converting, updating, cell-writing, or sheet
+step does not exist, and when the `input` file of `xlsx.write` or
+`xlsx.append` is missing (those two may create their workbook, so it is not
+checked); fields still holding a step-output reference are skipped.
+
 
 ## archive.create / archive.extract / archive.list
 
@@ -1134,6 +1249,41 @@ steps:
 ```
 
 `with` fields: `source`, `destination`, `format`, `compression_level`, `password`, `overwrite`, `strip_components`, `include`, `exclude`.
+
+## chat.completion
+
+Send a prompt to a model and print the reply. `with.prompt` (or `with.messages`) is required; every other `with` key (`provider`, `model`, `system`, `tools`, `max_tool_iterations`, `stream`, `thinking`, `web_search`) configures the model and replaces the DAG-level `llm` block entirely. `with.model` can be a list of `{provider, name}` entries tried in order.
+
+Add a step-level `output_schema` when later steps need typed values instead of free text:
+
+```yaml
+steps:
+  - id: classify
+    action: chat.completion
+    with:
+      provider: openai
+      model: gpt-5
+      prompt: "Classify this note and extract the amount: ${foreach.item.note}"
+    output_schema:
+      type: object
+      properties:
+        category: {type: string, enum: [refund, complaint, question]}
+        amount: {type: number}
+      required: [category]
+
+  - id: record
+    depends: classify
+    run: ./record.sh '${steps.classify.outputs.category}' '${steps.classify.outputs.amount}'
+```
+
+Structured output behavior:
+
+- The model answers through a forced `respond` tool whose parameters are the schema. A plain-text JSON reply is also accepted.
+- Unlisted properties are dropped, the rest is validated, and stdout is one JSON object. Each listed property becomes `${steps.<id>.outputs.<name>}`; references to other names are reported as unknown even for an open schema.
+- The schema needs `type: object`, at least one property, and every `required` name listed under `properties`. It cannot be combined with `web_search` or a tool named `respond`.
+- An invalid answer gets one correction, then the next `with.model` entry is tried. When none answers, the step fails; the error omits the answer and the step's stderr shows each rejected answer and why.
+- Validation checks shape, not truth. For extraction, leave a field out of `required` when the text may not contain it; a required field makes the model invent a value.
+- With `tools`, the tool DAGs are offered next to `respond`. Reaching `max_tool_iterations` without an answer fails that model like an unusable answer, so the next `with.model` entry starts over, running the tools again. The answer is never streamed.
 
 ## harness.run
 
@@ -1235,7 +1385,7 @@ steps:
 Browser behavior:
 
 - Each `do` item sets exactly one of `goto`, `act`, `extract`, `expect`, `wait` (`selector` or `duration`), `screenshot`, or `ask`, plus optional `when` (skip unless it holds) and `timeout`.
-- An `act` performs one action: "Sign in with %user% and %password%" types into one field and stops. Write one act per field and one for the button.
+- An `act` performs one action: "Sign in with %user% and %password%" types into one field and stops. Write one act per field and one for the button. A dropdown that is not a native `<select>` takes two acts: one opens it, the next picks the option.
 - `expect` and `when` take a statement the model judges, or a fixed check `{text}`, `{selector}`, or `{url}` that reads the page without a model call. Prefer fixed checks for monitoring; they give the same result on every run. A fixed `when` reads the page once; add `within: 10s` when the page may still be loading.
 - Declare secrets under `secrets:`, pass them in `variables`, and reference them as `%name%`. The browser gets the value, the model only the name. An instruction containing a declared secret value (4+ characters) fails the step; do not write `${SECRET}` inside an instruction. A `%name%` that is not a variable or an earlier `ask.as` fails validation.
 - Model requests carry the instruction, the page's elements and visible text, and the extract schema; never variable values, typed field text, or screenshots. Declared secrets shown on the page are masked; plain variables are not.

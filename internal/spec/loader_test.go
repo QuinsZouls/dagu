@@ -1068,6 +1068,10 @@ steps:
 		assert.Contains(t, dag.Env, "SUB_ENV=sub_value")
 		assert.Contains(t, dag.Env, "OVERWRITE_ENV=sub_overwrite_value")
 
+		// The root env span covers the child's own entries, not the base ones.
+		span := dag.RootEnvSpan
+		assert.ElementsMatch(t, []string{"SUB_ENV=sub_value", "OVERWRITE_ENV=sub_overwrite_value"}, dag.Env[span.Start:span.End])
+
 		// Other fields should be inherited
 		assert.Equal(t, "/base/logs", dag.LogDir)
 		assert.Equal(t, 90, dag.HistRetentionDays)
