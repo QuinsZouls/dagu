@@ -2654,7 +2654,7 @@ func TestLoad_LegacyLicenseKeysIgnored(t *testing.T) {
 		_, cfgHasLicense := reflect.TypeOf(*cfg).FieldByName("License")
 		require.False(t, cfgHasLicense,
 			"config.Config must not have a License field")
-		_, defHasLicense := reflect.TypeOf(Definition{}).FieldByName("License")
+		_, defHasLicense := reflect.TypeFor[Definition]().FieldByName("License")
 		require.False(t, defHasLicense,
 			"config.Definition must not have a License field")
 	}

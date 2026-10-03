@@ -227,7 +227,7 @@ func TestCommunityMultiUser_ConcurrentDemotionKeepsOneAdmin(t *testing.T) {
 	const iterations = 15
 	survivorToken := tokenA // iteration 0: both admins already
 	lastAdminRefusals := 0
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		rearmBoth(survivorToken, i)
 
 		out := runRaceRound(i, tokenA, tokenB, bID, aID, "A_demotes_B", "B_demotes_A")
@@ -261,7 +261,7 @@ func TestCommunityMultiUser_ConcurrentDemotionKeepsOneAdmin(t *testing.T) {
 	// Both permission checks always pass, so the second write always reaches
 	// the in-lock guard: one 200, one 403, and the 403 MUST be the
 	// last-active-admin message — every round.
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		rearmBoth(survivorToken, i)
 
 		out := runRaceRound(i, key1, key2, aID, bID, "K1_demotes_A", "K2_demotes_B")

@@ -320,10 +320,7 @@ func (a *API) requireIncidentManagement(ctx context.Context) error {
 	if a.incidentService == nil {
 		return errIncidentManagementNotAvailable
 	}
-	if err := a.requireDeveloperOrAbove(ctx); err != nil {
-		return err
-	}
-	return nil
+	return a.requireDeveloperOrAbove(ctx)
 }
 
 func incidentRequestError(err error) bool {

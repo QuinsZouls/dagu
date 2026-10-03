@@ -302,9 +302,9 @@ func TestConfigTypesHaveNoLicenseField(t *testing.T) {
 // a /license/ path, a License-named operation or a License-named schema.
 // The non-empty sanity check keeps this leg from passing vacuously.
 func TestEmbeddedSpecHasNoLicenseSurface(t *testing.T) {
-	spec, err := api.GetSwagger()
+	spec, err := api.GetSpec()
 	if err != nil {
-		t.Fatalf("api.GetSwagger(): %v", err)
+		t.Fatalf("api.GetSpec(): %v", err)
 	}
 	if spec.Paths == nil || spec.Paths.Len() == 0 {
 		t.Fatalf("embedded OpenAPI spec has no paths — this leg cannot be trusted")
