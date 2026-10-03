@@ -11,13 +11,15 @@ import (
 	"strings"
 
 	"github.com/dagucloud/dagu/v2/internal/cmn/fileutil"
+	"github.com/dagucloud/dagu/v2/internal/cmn/replaycache"
 	"github.com/dagucloud/dagu/v2/internal/cmn/workbook"
 	"github.com/spf13/cobra"
 )
 
-// Xlsx returns the command group for workbooks. The commands read a file
+// Xlsx returns the command group for workbooks. inspect and read open a file
 // directly, need no configuration or engine, and create no run, so a host
-// can call them to show a sheet picker or a typed preview.
+// can call them to show a sheet picker or a typed preview; cache clear is
+// the exception, acting on the data directory of the configured host.
 func Xlsx() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "xlsx",
@@ -29,6 +31,7 @@ func Xlsx() *cobra.Command {
 	}
 	cmd.AddCommand(xlsxInspectCommand())
 	cmd.AddCommand(xlsxReadCommand())
+	cmd.AddCommand(xlsxCacheCommand())
 	return cmd
 }
 
@@ -302,4 +305,43 @@ func displayValue(v any) string {
 		}
 		return string(data)
 	}
+}
+
+// xlsxCacheKind names the cache in command output.
+const xlsxCacheKind = "xlsx"
+
+func xlsxCacheCommand() *cobra.Command {
+	cmd := NewCommand(&cobra.Command{
+		Use:   "cache",
+		Short: "Manage the replay cache of xlsx.extract steps",
+	}, nil, func(ctx *Context, _ []string) error {
+		return ctx.Command.Help()
+	})
+
+	cmd.AddCommand(NewCommand(&cobra.Command{
+		Use:   "clear [flags] <DAG>",
+		Short: "Clear the cells a DAG's xlsx.extract steps keep by sheet layout",
+		Long: `Clear the cells that a DAG's xlsx.extract steps found with a model and
+replay on later runs of the same sheet layout. The next run of a cleared step
+asks the model again and keeps the new cells.
+
+Identify the DAG by name or by YAML file path. Without --step, every step of
+the DAG is cleared.
+
+The cache is kept on the host that ran the step. In distributed mode, run
+this command on the worker.
+
+Examples:
+  dagu xlsx cache clear quotes                   # Clear every step
+  dagu xlsx cache clear quotes --step fields     # Clear one step
+`,
+		Args: cobra.ExactArgs(1),
+	}, []commandLineFlag{replayCacheStepFlag}, func(ctx *Context, args []string) error {
+		return clearReplayCache(ctx, args[0], namedReplayCache{kind: xlsxCacheKind, store: xlsxReplayCache(ctx)})
+	}))
+	return cmd
+}
+
+func xlsxReplayCache(ctx *Context) *replaycache.Store {
+	return replaycache.New(filepath.Join(ctx.Config.Paths.DataDir, workbook.DataDirName))
 }

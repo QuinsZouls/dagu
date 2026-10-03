@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,10 +198,27 @@ func TestParseSetAndDecodeUpdateRows(t *testing.T) {
 	set, err := ParseSet(map[string]any{"Status": "status", "Note": map[string]any{"value": 3}})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]SetValue{"Status": {Field: "status"}, "Note": {Literal: 3, IsLiteral: true}}, set)
-	for _, bad := range []any{"status", map[string]any{}, map[string]any{"a": 1}, map[string]any{"a": map[string]any{"x": 1}}, map[string]any{"": "f"}} {
+	// A literal that is a canonical number in text, the form a reference
+	// arrives in, becomes a number unless a type pins it.
+	literals, err := ParseSet(map[string]any{
+		"Amount": map[string]any{"value": "100"},
+		"Code":   map[string]any{"value": "007", "type": "string"},
+		"Rate":   map[string]any{"value": "1,234.5", "type": "number"},
+		"Memo":   map[string]any{"value": "007"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, SetValue{Literal: int64(100), IsLiteral: true}, literals["Amount"])
+	assert.Equal(t, SetValue{Literal: "007", IsLiteral: true, Type: TypeString}, literals["Code"])
+	assert.Equal(t, SetValue{Literal: "1,234.5", IsLiteral: true, Type: TypeNumber}, literals["Rate"])
+	assert.Equal(t, SetValue{Literal: "007", IsLiteral: true}, literals["Memo"], "leading zeros stay text")
+	for _, bad := range []any{"status", map[string]any{}, map[string]any{"a": 1}, map[string]any{"a": map[string]any{"x": 1}}, map[string]any{"": "f"},
+		map[string]any{"a": map[string]any{"value": 1, "type": "money"}}, map[string]any{"a": map[string]any{"value": 1, "bold": true}},
+		map[string]any{"a": map[string]any{"value": 1, "type": 2}}} {
 		_, err := ParseSet(bad)
 		require.Error(t, err, "%v", bad)
 	}
+	_, err = ParseSet(map[string]any{"a": map[string]any{"value": 1, "type": "money"}})
+	require.ErrorContains(t, err, `set.a: type: unknown column type "money"`)
 	nilSet, err := ParseSet(nil)
 	require.NoError(t, err)
 	assert.Nil(t, nilSet)
@@ -217,6 +235,24 @@ func TestParseSetAndDecodeUpdateRows(t *testing.T) {
 	require.Error(t, err)
 	_, err = DecodeUpdateRows("nope")
 	require.Error(t, err)
+}
+
+func TestUpdateRowsLiteralNumericText(t *testing.T) {
+	t.Parallel()
+	path := ordersBook(t)
+	set, err := ParseSet(map[string]any{
+		"Amount": map[string]any{"value": "100"},
+		"Code":   map[string]any{"value": "007", "type": "string"},
+		"Rate":   map[string]any{"value": "1,234.5", "type": "number"},
+	})
+	require.NoError(t, err)
+	_, err = UpdateRows(context.Background(), path, UpdateOptions{Key: "Invoice No", Rows: []Row{{"Invoice No": "INV-1"}}, Set: set})
+	require.NoError(t, err)
+	back, err := Read(context.Background(), path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), back.Rows[0]["Amount"], "a canonical numeric literal is a number")
+	assert.Equal(t, "007", back.Rows[0]["Code"], "a pinned string keeps its zeros")
+	assert.Equal(t, 1234.5, back.Rows[0]["Rate"], "a pinned number converts the way a column type does")
 }
 
 func TestUpdateRowsAbsentFieldLeavesCellAndNullClears(t *testing.T) {
@@ -245,4 +281,154 @@ func TestUpdateRowsRejectsTwoInputsForOneRow(t *testing.T) {
 	rows := []Row{{"Invoice No": "INV-1", "Status": "a"}, {"Invoice No": "INV-1", "Status": "b"}}
 	_, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "Invoice No", Rows: rows})
 	require.ErrorContains(t, err, "rows[0] and rows[1] both address row 2")
+}
+
+func TestUpdateRowsTypedLiteralReplacesTextThatReadsTheSame(t *testing.T) {
+	t.Parallel()
+	path := ordersBook(t)
+	text, err := ParseSet(map[string]any{"Amount": map[string]any{"value": "100", "type": "string"}})
+	require.NoError(t, err)
+	_, err = UpdateRows(context.Background(), path, UpdateOptions{Key: "Invoice No", Rows: []Row{{"Invoice No": "INV-1"}}, Set: text})
+	require.NoError(t, err)
+	number, err := ParseSet(map[string]any{"Amount": map[string]any{"value": "100", "type": "number"}})
+	require.NoError(t, err)
+	result, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "Invoice No", Rows: []Row{{"Invoice No": "INV-1"}}, Set: number})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Changes.CellsChanged, "a number over text that reads the same is a change")
+	back, err := Read(context.Background(), path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), back.Rows[0]["Amount"])
+}
+
+func TestUpdateRowsDatetimeLiteralKeepsItsFormatAtMidnight(t *testing.T) {
+	t.Parallel()
+	path := ordersBook(t)
+	// Amount is a number column, so the literal brings its own format, as a
+	// date written into a plain cell does; a date column would keep its own.
+	set, err := ParseSet(map[string]any{"Amount": map[string]any{"value": "2026-10-01T00:00:00", "type": "datetime"}})
+	require.NoError(t, err)
+	_, err = UpdateRows(context.Background(), path, UpdateOptions{Key: "Invoice No", Rows: []Row{{"Invoice No": "INV-1"}}, Set: set})
+	require.NoError(t, err)
+	back, err := Read(context.Background(), path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "2026-10-01T00:00:00", back.Rows[0]["Amount"], "a literal pinned to datetime keeps a date-time format even at midnight")
+}
+
+// mergedBook is an order slip: order 1 has two lines, rows 2 and 3, whose
+// Order, Status, and Due cells are merged, and order 2 has one line. The
+// merges replace the default ones when given.
+func mergedBook(t *testing.T, merges ...string) string {
+	t.Helper()
+	f := excelize.NewFile()
+	const s = "Sheet1"
+	setRow(t, f, s, "A1", "ID", "Order", "Status", "Due")
+	setRow(t, f, s, "A2", 1, "A-1")
+	setRow(t, f, s, "A3", 2)
+	setRow(t, f, s, "A4", 3, "A-2")
+	if len(merges) == 0 {
+		merges = []string{"B2:B3", "C2:C3", "D2:D3"}
+	}
+	for _, m := range merges {
+		first, last, _ := strings.Cut(m, ":")
+		require.NoError(t, f.MergeCell(s, first, last))
+	}
+	return saveBook(t, f, "merged.xlsx")
+}
+
+func TestUpdateRowsMergedCellConflict(t *testing.T) {
+	t.Parallel()
+	path := mergedBook(t)
+	before := fileHash(t, path)
+	_, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 1, "Status": "first"}, {"ID": 2, "Status": "second"}}})
+	require.EqualError(t, err, "merged.xlsx Sheet1: rows[0] and rows[1] write different values to merged cell Sheet1!C2:C3")
+	// A row whose value the cell already holds still claims it.
+	_, err = UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 1, "Status": nil}, {"ID": 2, "Status": "second"}}})
+	require.EqualError(t, err, "merged.xlsx Sheet1: rows[0] and rows[1] write different values to merged cell Sheet1!C2:C3")
+	assert.Equal(t, before, fileHash(t, path))
+}
+
+func TestUpdateRowsMergedCellEqualValues(t *testing.T) {
+	t.Parallel()
+	path := mergedBook(t)
+	result, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 1, "Status": "Done"}, {"ID": 2, "Status": "Done"}}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Changes.CellsChanged, "the merged cell is written once")
+
+	back, err := Read(context.Background(), path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "Done", back.Rows[0]["Status"])
+	assert.Equal(t, "Done", back.Rows[1]["Status"])
+	assert.Nil(t, back.Rows[2]["Status"])
+	f, err := excelize.OpenFile(path)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	merges, err := f.GetMergeCells("Sheet1")
+	require.NoError(t, err)
+	assert.Len(t, merges, 3)
+}
+
+func TestUpdateRowsMergedCellFromItsSecondRow(t *testing.T) {
+	t.Parallel()
+	path := mergedBook(t)
+	_, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 2, "Status": "Done", "Due": "2026-11-01"}}})
+	require.NoError(t, err)
+	back, err := Read(context.Background(), path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "Done", back.Rows[0]["Status"])
+	assert.Equal(t, "2026-11-01", back.Rows[0]["Due"], "the date format lands on the cell that shows the date")
+
+	_, err = UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 2, "Status": nil}}})
+	require.NoError(t, err)
+	back, err = Read(context.Background(), path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Nil(t, back.Rows[0]["Status"])
+}
+
+// A merged cell reaching outside the column's data cells would carry the
+// write into the key, the header, or a column the update does not set.
+func TestUpdateRowsMergedCellOutsideItsColumn(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, merge, message string
+		row                  Row
+		missing              MissingMode
+	}{
+		{"key column", "A4:C4", `merged.xlsx Sheet1!C4: merged cell A4:C4 reaches outside column "Status" of the data rows; unmerge it to write this cell`, Row{"ID": 3, "Status": "Done"}, ""},
+		{"header row", "C1:C2", `merged.xlsx Sheet1!C2: merged cell C1:C2 reaches outside column "Status" of the data rows; unmerge it to write this cell`, Row{"ID": 1, "Status": "Done"}, ""},
+		{"appended row", "A5:D6", `merged.xlsx Sheet1!A5: merged cell A5:D6 reaches outside column "ID" of the data rows; unmerge it to write this cell`, Row{"ID": 9, "Status": "New"}, MissingAppend},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := mergedBook(t, tc.merge)
+			before := fileHash(t, path)
+			_, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{tc.row}, Missing: tc.missing})
+			require.EqualError(t, err, tc.message)
+			assert.Equal(t, before, fileHash(t, path))
+		})
+	}
+}
+
+func TestUpdateRowsComparesTextExactly(t *testing.T) {
+	t.Parallel()
+	path := ordersBook(t)
+	result, err := UpdateRows(context.Background(), path, UpdateOptions{Key: "Invoice No", Rows: []Row{{"Invoice No": "INV-2", "Status": "Done "}}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Changes.CellsChanged, "surrounding space is part of the value")
+
+	merged := mergedBook(t)
+	_, err = UpdateRows(context.Background(), merged, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 1, "Status": "Ready"}, {"ID": 2, "Status": "Ready "}}})
+	require.ErrorContains(t, err, "rows[0] and rows[1] write different values to merged cell Sheet1!C2:C3")
+}
+
+// A header cell merged across the column a new one would take: the new
+// header would land in the merged cell's top-left cell, an existing header.
+func TestUpdateRowsAddedColumnUnderMergedHeader(t *testing.T) {
+	t.Parallel()
+	path := mergedBook(t, "D1:E1")
+	before := fileHash(t, path)
+	set, err := ParseSet(map[string]any{"Checked": map[string]any{"value": "yes"}})
+	require.NoError(t, err)
+	_, err = UpdateRows(context.Background(), path, UpdateOptions{Key: "ID", Rows: []Row{{"ID": 1}}, Set: set})
+	require.EqualError(t, err, `merged.xlsx Sheet1!E1: merged cell D1:E1 covers the header cell of new column "Checked"; unmerge it to add the column`)
+	assert.Equal(t, before, fileHash(t, path))
 }

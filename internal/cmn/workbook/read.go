@@ -47,6 +47,8 @@ type ReadOptions struct {
 	// quietLimit drops the warning a hit MaxRows adds; Inspect samples a
 	// few rows on purpose and reports the row count separately.
 	quietLimit bool
+	// noLimit reads every row; Convert writes to a file, not an output.
+	noLimit bool
 }
 
 // ReadResult is what a read publishes.
@@ -134,7 +136,7 @@ func (w *file) read(ctx context.Context, opts ReadOptions) (*ReadResult, error) 
 			pending = append(pending, row)
 			continue
 		}
-		if counted >= maxRows {
+		if !opts.noLimit && counted >= maxRows {
 			result.Truncated = true
 			if !opts.quietLimit {
 				warn(fmt.Sprintf("stopped after %d rows; set max_rows to read more", maxRows))

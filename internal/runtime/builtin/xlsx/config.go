@@ -5,10 +5,12 @@ package xlsx
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dagucloud/dagu/v2/internal/cmn/value"
 	"github.com/dagucloud/dagu/v2/internal/cmn/workbook"
@@ -48,14 +50,50 @@ type config struct {
 	Set           map[string]any    `mapstructure:"set"`
 	Missing       string            `mapstructure:"missing"`
 	Artifact      bool              `mapstructure:"artifact"`
+	// validate
+	Required    []string       `mapstructure:"required"`
+	NotBlank    []string       `mapstructure:"not_blank"`
+	Unique      []string       `mapstructure:"unique"`
+	Allowed     map[string]any `mapstructure:"allowed"`
+	OnProblem   string         `mapstructure:"on_problem"`
+	MaxProblems int            `mapstructure:"max_problems"`
+	// write_cells and convert
+	Cells  map[string]any `mapstructure:"cells"`
+	Output string         `mapstructure:"output"`
+	// sheet
+	Operation string `mapstructure:"operation"`
+	To        string `mapstructure:"to"`
+	IfExists  string `mapstructure:"if_exists"`
+	Position  int    `mapstructure:"position"`
+	// csv files: input of write and append, output of convert
+	Encoding  string `mapstructure:"encoding"`
+	Delimiter string `mapstructure:"delimiter"`
+	// extract
+	Instruction string         `mapstructure:"instruction"`
+	Schema      map[string]any `mapstructure:"schema"`
+	SendValues  bool           `mapstructure:"send_values"`
+	Cache       bool           `mapstructure:"cache"`
+	// LLM is the model block xlsx.extract takes through with.llm; the spec
+	// layer moves it to the step before the executor sees it, so here it is
+	// only a key that is foreign to every other operation.
+	LLM any `mapstructure:"llm"`
 
 	// Parsed forms, filled by validateConfig.
-	header  workbook.HeaderSpec
-	columns []workbook.ColumnSelect
-	types   map[string]workbook.ColumnType
-	set     map[string]workbook.SetValue
-	wait    time.Duration
-	present map[string]bool
+	// extractProperties lists the schema's properties in order and
+	// extractTypes the column type each one pins, when it pins one.
+	extractProperties []string
+	extractTypes      map[string]workbook.ColumnType
+	header            workbook.HeaderSpec
+	columns           []workbook.ColumnSelect
+	types             map[string]workbook.ColumnType
+	set               map[string]workbook.SetValue
+	wait              time.Duration
+	allowed           map[string][]any
+	cells             map[string]workbook.CellValue
+	convertFormat     workbook.ConvertFormat
+	encoding          workbook.Encoding
+	delimiter         rune
+	present           map[string]bool
 	// deferred lists fields whose value is still a reference at build time.
 	deferred map[string]bool
 }
@@ -67,7 +105,7 @@ func (cfg config) provided(field string) bool {
 }
 
 func defaultConfig() config {
-	return config{Atomic: true}
+	return config{Atomic: true, SendValues: true, Cache: true}
 }
 
 // decodeConfig fills cfg from a with map. At DAG build time, deferReferences
@@ -130,17 +168,29 @@ var fieldsByOperation = map[string][]string{
 		"keep_empty_rows", "trim", "formulas", "types", "on_type_error", "where", "max_rows"},
 	opInfo:       {"path", "password"},
 	opListSheets: {"path", "password"},
-	opWrite: {"path", "password", "sheet", "rows", "input", "format", "columns", "header", "mode", "style",
+	opWrite: {"path", "password", "sheet", "rows", "input", "format", "encoding", "delimiter", "columns", "header",
+		"mode", "style", "types", "atomic", "dry_run", "wait_for_unlock", "artifact"},
+	opAppend: {"path", "password", "sheet", "rows", "input", "format", "encoding", "delimiter", "columns", "header",
 		"types", "atomic", "dry_run", "wait_for_unlock", "artifact"},
-	opAppend: {"path", "password", "sheet", "rows", "input", "format", "columns", "types", "atomic",
-		"dry_run", "wait_for_unlock", "artifact"},
 	opUpdateRows: {"path", "password", "sheet", "header", "rows", "key", "set", "missing", "atomic",
 		"dry_run", "wait_for_unlock", "artifact"},
+	opValidate: {"path", "password", "sheet", "range", "header", "columns", "merged", "trim", "formulas",
+		"required", "not_blank", "unique", "types", "allowed", "on_problem", "max_problems"},
+	opWriteCells: {"path", "password", "sheet", "cells", "output", "atomic", "dry_run", "wait_for_unlock", "artifact"},
+	opSheet: {"path", "password", "operation", "sheet", "to", "if_exists", "missing", "position", "atomic",
+		"dry_run", "wait_for_unlock", "artifact"},
+	opConvert: {"path", "password", "sheet", "range", "header", "columns", "types", "trim", "merged", "formulas",
+		"output", "format", "encoding", "delimiter", "atomic", "artifact"},
+	opExtract: {"path", "password", "sheet", "range", "instruction", "schema", "send_values", "cache", "trim", "formulas"},
 }
+
+// extractFixedOutputs are the outputs xlsx.extract publishes beside the
+// schema's properties, which a property may not be named after.
+var extractFixedOutputs = []string{"cells", "sheet", "warnings", "source"}
 
 func isWriter(operation string) bool {
 	switch operation {
-	case opWrite, opAppend, opUpdateRows:
+	case opWrite, opAppend, opUpdateRows, opWriteCells, opSheet, opConvert:
 		return true
 	default:
 		return false
@@ -204,10 +254,179 @@ func validateConfig(operation string, cfg *config) error {
 	if err := workbook.ValidateWhere(cfg.Where); err != nil {
 		return fmt.Errorf("%w: where: %v", errConfig, err)
 	}
+	if err := validateCSVConfig(operation, cfg); err != nil {
+		return err
+	}
+	if operation == opValidate {
+		return validateValidateConfig(cfg)
+	}
+	if operation == opExtract {
+		return validateExtractConfig(cfg)
+	}
 	if isWriter(operation) {
 		return validateWriterConfig(operation, cfg)
 	}
 	return nil
+}
+
+// validateCSVConfig parses the encoding and delimiter of a CSV file: the
+// input of write and append, or the output of convert.
+func validateCSVConfig(operation string, cfg *config) error {
+	if cfg.provided("encoding") {
+		enc, err := workbook.ParseEncoding(cfg.Encoding)
+		if err != nil {
+			return fmt.Errorf("%w: encoding must be utf-8, utf-8-bom, or shift_jis", errConfig)
+		}
+		cfg.encoding = enc
+	}
+	if cfg.provided("delimiter") {
+		runes := []rune(cfg.Delimiter)
+		if len(runes) != 1 {
+			return fmt.Errorf("%w: delimiter must be a single character", errConfig)
+		}
+		if !validDelimiter(runes[0]) {
+			return fmt.Errorf("%w: delimiter cannot be a quote, a line break, or NUL", errConfig)
+		}
+		cfg.delimiter = runes[0]
+	}
+	if operation == opWrite || operation == opAppend {
+		for _, field := range []string{"encoding", "delimiter"} {
+			if !cfg.present[field] {
+				continue
+			}
+			if !cfg.present["input"] {
+				return fmt.Errorf("%w: %s requires with.input", errConfig, field)
+			}
+			// The input's format is the format option or its extension;
+			// only csv has an encoding or a delimiter.
+			format := strings.ToLower(strings.TrimSpace(cfg.Format))
+			if format == "" && cfg.provided("input") {
+				format = strings.TrimPrefix(strings.ToLower(filepath.Ext(cfg.Input)), ".")
+			}
+			if format != "" && format != "csv" {
+				return fmt.Errorf("%w: %s applies to csv only", errConfig, field)
+			}
+		}
+	}
+	return nil
+}
+
+// validDelimiter mirrors what encoding/csv accepts as a field separator.
+func validDelimiter(r rune) bool {
+	return r != 0 && r != '"' && r != '\r' && r != '\n' && utf8.ValidRune(r) && r != utf8.RuneError
+}
+
+// validateValidateConfig checks the rules of xlsx.validate.
+func validateValidateConfig(cfg *config) error {
+	// A rule counts when it holds something, or when its value is still a
+	// reference that resolves at run time; an empty list or map checks
+	// nothing and is not a rule.
+	rules := 0
+	for field, size := range map[string]int{
+		"required": len(cfg.Required), "not_blank": len(cfg.NotBlank), "unique": len(cfg.Unique),
+		"types": len(cfg.Types), "allowed": len(cfg.Allowed),
+	} {
+		if size > 0 || cfg.deferred[field] {
+			rules++
+		}
+	}
+	if rules == 0 {
+		return fmt.Errorf("%w: validate requires at least one of with.required, with.not_blank, with.unique, with.types, or with.allowed", errConfig)
+	}
+	switch cfg.OnProblem {
+	case "", "warn", "fail":
+	default:
+		return fmt.Errorf("%w: on_problem must be warn or fail", errConfig)
+	}
+	if cfg.MaxProblems < 0 || (cfg.provided("max_problems") && cfg.MaxProblems == 0) {
+		return fmt.Errorf("%w: max_problems must be >= 1", errConfig)
+	}
+	if len(cfg.Allowed) > 0 {
+		cfg.allowed = make(map[string][]any, len(cfg.Allowed))
+		for column, raw := range cfg.Allowed {
+			list, ok := raw.([]any)
+			if !ok {
+				return fmt.Errorf("%w: allowed.%s must be a list of values", errConfig, column)
+			}
+			cfg.allowed[column] = list
+		}
+	}
+	return nil
+}
+
+// validateExtractConfig checks the instruction and the schema of
+// xlsx.extract, and reads which column type each property pins.
+func validateExtractConfig(cfg *config) error {
+	if strings.TrimSpace(cfg.Instruction) == "" && !cfg.deferred["instruction"] {
+		return fmt.Errorf("%w: extract requires with.instruction", errConfig)
+	}
+	if !cfg.present["schema"] {
+		return fmt.Errorf("%w: extract requires with.schema", errConfig)
+	}
+	if !cfg.provided("schema") {
+		return nil
+	}
+	if cfg.Schema["type"] != "object" {
+		return fmt.Errorf("%w: schema must have type: object", errConfig)
+	}
+	var properties map[string]any
+	if raw, present := cfg.Schema["properties"]; present {
+		var ok bool
+		if properties, ok = raw.(map[string]any); !ok {
+			return fmt.Errorf("%w: schema.properties must be an object", errConfig)
+		}
+	}
+	cfg.extractProperties = make([]string, 0, len(properties))
+	cfg.extractTypes = map[string]workbook.ColumnType{}
+	for _, name := range sortedNames(properties) {
+		if slices.Contains(extractFixedOutputs, name) {
+			return fmt.Errorf("%w: schema property %q collides with an output of xlsx.extract", errConfig, name)
+		}
+		cfg.extractProperties = append(cfg.extractProperties, name)
+		spec, ok := properties[name].(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: schema.properties.%s must be an object", errConfig, name)
+		}
+		t, ok, err := pinnedType(spec)
+		if err != nil {
+			return fmt.Errorf("%w: schema.properties.%s: %v", errConfig, name, err)
+		}
+		if ok {
+			cfg.extractTypes[name] = t
+		}
+	}
+	return nil
+}
+
+// pinnedType maps a property's JSON Schema type to the column type the
+// cell is read with: string (date or date-time by format), number,
+// integer, or boolean. A property without a type takes the cell's own
+// value.
+func pinnedType(spec map[string]any) (workbook.ColumnType, bool, error) {
+	raw, present := spec["type"]
+	if !present {
+		return "", false, nil
+	}
+	kind, _ := raw.(string)
+	switch kind {
+	case "string":
+		switch format, _ := spec["format"].(string); format {
+		case "date":
+			return workbook.TypeDate, true, nil
+		case "date-time":
+			return workbook.TypeDateTime, true, nil
+		default:
+			return workbook.TypeString, true, nil
+		}
+	case "number":
+		return workbook.TypeNumber, true, nil
+	case "integer":
+		return workbook.TypeInteger, true, nil
+	case "boolean":
+		return workbook.TypeBoolean, true, nil
+	default:
+		return "", false, fmt.Errorf("type must be string, number, integer, or boolean")
+	}
 }
 
 func validateWriterConfig(operation string, cfg *config) error {
@@ -250,6 +469,47 @@ func validateWriterConfig(operation string, cfg *config) error {
 				return fmt.Errorf("%w: %v", errConfig, err)
 			}
 			cfg.set = set
+		}
+	}
+	if operation == opWriteCells {
+		if !cfg.present["cells"] {
+			return fmt.Errorf("%w: write_cells requires with.cells", errConfig)
+		}
+		if cfg.provided("cells") {
+			cells, err := workbook.ParseCells(cfg.Cells)
+			if err != nil {
+				return fmt.Errorf("%w: %v", errConfig, err)
+			}
+			cfg.cells = cells
+		}
+		if cfg.provided("output") {
+			if err := workbook.CheckExtension(cfg.Output); err != nil {
+				return fmt.Errorf("%w: output: %v", errConfig, err)
+			}
+		}
+	}
+	if operation == opSheet {
+		if err := validateSheetConfig(cfg); err != nil {
+			return err
+		}
+	}
+	if operation == opConvert {
+		if strings.TrimSpace(cfg.Output) == "" && !cfg.deferred["output"] {
+			return fmt.Errorf("%w: convert requires with.output", errConfig)
+		}
+		if cfg.provided("output") || cfg.provided("format") {
+			format, err := workbook.ParseConvertFormat(cfg.Format, cfg.Output)
+			if err != nil && !(cfg.Format == "" && cfg.deferred["output"]) {
+				return fmt.Errorf("%w: %v", errConfig, err)
+			}
+			cfg.convertFormat = format
+		}
+		if cfg.convertFormat != "" && cfg.convertFormat != workbook.ConvertCSV {
+			for _, field := range []string{"encoding", "delimiter"} {
+				if cfg.present[field] {
+					return fmt.Errorf("%w: %s applies to csv only", errConfig, field)
+				}
+			}
 		}
 	}
 	switch cfg.Format {
@@ -335,6 +595,118 @@ func (cfg config) readOptions() workbook.ReadOptions {
 	}
 }
 
+// validateSheetConfig checks the fields of xlsx.sheet against its operation.
+func validateSheetConfig(cfg *config) error {
+	operation := strings.ToLower(strings.TrimSpace(cfg.Operation))
+	if operation == "" && !cfg.deferred["operation"] {
+		return fmt.Errorf("%w: operation is required for sheet", errConfig)
+	}
+	switch operation {
+	case "", string(workbook.SheetAdd), string(workbook.SheetCopy), string(workbook.SheetRename), string(workbook.SheetDelete):
+	default:
+		return fmt.Errorf("%w: operation must be add, copy, rename, or delete", errConfig)
+	}
+	if strings.TrimSpace(cfg.Sheet) == "" && !cfg.deferred["sheet"] {
+		return fmt.Errorf("%w: sheet is required for sheet", errConfig)
+	}
+	known := operation != ""
+	needsTo := operation == string(workbook.SheetCopy) || operation == string(workbook.SheetRename)
+	if known && needsTo && strings.TrimSpace(cfg.To) == "" && !cfg.deferred["to"] {
+		return fmt.Errorf("%w: to is required for %s", errConfig, operation)
+	}
+	if known && !needsTo && cfg.present["to"] {
+		return fmt.Errorf("%w: to is only valid for copy and rename", errConfig)
+	}
+	switch cfg.IfExists {
+	case "", string(workbook.ExistsFail), string(workbook.ExistsSkip), string(workbook.ExistsReplace):
+	default:
+		return fmt.Errorf("%w: if_exists must be fail, skip, or replace", errConfig)
+	}
+	if known && operation == string(workbook.SheetDelete) && cfg.present["if_exists"] {
+		return fmt.Errorf("%w: if_exists is only valid for add, copy, and rename", errConfig)
+	}
+	switch cfg.Missing {
+	case "", string(workbook.MissingFail), string(workbook.MissingSkip):
+	default:
+		return fmt.Errorf("%w: missing must be fail or skip for sheet", errConfig)
+	}
+	if known && operation == string(workbook.SheetAdd) && cfg.present["missing"] {
+		return fmt.Errorf("%w: missing is only valid for copy, rename, and delete", errConfig)
+	}
+	if cfg.provided("position") && cfg.Position < 1 {
+		return fmt.Errorf("%w: position must be >= 1", errConfig)
+	}
+	if known && cfg.present["position"] && operation != string(workbook.SheetAdd) && operation != string(workbook.SheetCopy) {
+		return fmt.Errorf("%w: position is only valid for add and copy", errConfig)
+	}
+	return nil
+}
+
+func (cfg config) validateOptions() workbook.ValidateOptions {
+	return workbook.ValidateOptions{
+		Password:    cfg.Password,
+		Sheet:       cfg.Sheet,
+		Range:       cfg.Range,
+		Header:      cfg.header,
+		Columns:     cfg.columns,
+		Merged:      workbook.MergedMode(cfg.Merged),
+		Trim:        cfg.Trim,
+		Formulas:    workbook.FormulaMode(cfg.Formulas),
+		Required:    cfg.Required,
+		NotBlank:    cfg.NotBlank,
+		Unique:      cfg.Unique,
+		Types:       cfg.types,
+		Allowed:     cfg.allowed,
+		MaxProblems: cfg.MaxProblems,
+	}
+}
+
+func (cfg config) writeCellsOptions(output string, log func(string)) workbook.WriteCellsOptions {
+	return workbook.WriteCellsOptions{
+		Password: cfg.Password,
+		Sheet:    cfg.Sheet,
+		Cells:    cfg.cells,
+		Output:   output,
+		InPlace:  !cfg.Atomic,
+		DryRun:   cfg.DryRun,
+		Lock:     cfg.lockOptions(log),
+	}
+}
+
+func (cfg config) sheetOptions(log func(string)) workbook.SheetOptions {
+	return workbook.SheetOptions{
+		Password:  cfg.Password,
+		Operation: workbook.SheetOperation(strings.ToLower(strings.TrimSpace(cfg.Operation))),
+		Sheet:     cfg.Sheet,
+		To:        cfg.To,
+		IfExists:  workbook.ExistsMode(cfg.IfExists),
+		Missing:   workbook.MissingMode(cfg.Missing),
+		Position:  cfg.Position,
+		InPlace:   !cfg.Atomic,
+		DryRun:    cfg.DryRun,
+		Lock:      cfg.lockOptions(log),
+	}
+}
+
+func (cfg config) convertOptions(output string) workbook.ConvertOptions {
+	return workbook.ConvertOptions{
+		Password:  cfg.Password,
+		Output:    output,
+		Format:    cfg.convertFormat,
+		Sheet:     cfg.Sheet,
+		Range:     cfg.Range,
+		Header:    cfg.header,
+		Columns:   cfg.columns,
+		Types:     cfg.types,
+		Trim:      cfg.Trim,
+		Merged:    workbook.MergedMode(cfg.Merged),
+		Formulas:  workbook.FormulaMode(cfg.Formulas),
+		Encoding:  cfg.encoding,
+		Delimiter: cfg.delimiter,
+		InPlace:   !cfg.Atomic,
+	}
+}
+
 func (cfg config) updateOptions(rows []workbook.Row, log func(string)) workbook.UpdateOptions {
 	return workbook.UpdateOptions{
 		Password: cfg.Password,
@@ -364,7 +736,8 @@ var configSchema = &jsonschema.Schema{
 		"range": {Type: "string", Description: "Cell range such as A2:F or A2:F200, a Sheet!A2:F reference, a named range, or a table name. " +
 			"Without it the data block is detected: leading empty rows and columns are skipped."},
 		"header": {Description: "true (default) takes the first row of the range as column names, false names columns A, B, C, " +
-			"a row number takes that sheet row, and a list such as [3, 4] joins two header rows with a space."},
+			"a row number takes that sheet row, and a list such as [3, 4] joins two header rows with a space. " +
+			"For append and write with mode: append, true matches each field to the header row by name and false appends rows by position with no header row."},
 		"columns": {Description: "Columns to keep, in order: names, or {name: alias} entries to rename, such as [Status, {Invoice No: invoice_no}]."},
 		"merged": {Type: "string", Enum: []any{"fill", "first"},
 			Description: "How merged cells are read: fill (default) repeats the value into every covered cell; first keeps it in the top-left cell only."},
@@ -400,6 +773,34 @@ var configSchema = &jsonschema.Schema{
 			Description: "What xlsx.update_rows does with a row whose key is not in the sheet: fail (default), skip it with a warning, or append it below the last row."},
 		"artifact": boolOrRef("Keep a copy of the saved workbook with the run's artifacts, under xlsx/<step>/, so it is listed with the run. " +
 			"Enables artifact storage for the DAG."),
+		"required":  {Description: "xlsx.validate: columns the header row must have, such as [Invoice No, Amount]."},
+		"not_blank": {Description: "xlsx.validate: columns no row may leave empty."},
+		"unique":    {Description: "xlsx.validate: columns whose values may not repeat; empty cells are skipped."},
+		"allowed":   {Type: "object", Description: "xlsx.validate: the values each column may hold, such as {Status: [Open, Done]}; empty cells are skipped."},
+		"on_problem": {Type: "string", Enum: []any{"warn", "fail"},
+			Description: "What xlsx.validate does when it finds problems: warn (default) succeeds and publishes them, fail fails the step after listing them."},
+		"max_problems": {Description: "Most problems xlsx.validate keeps, 1 or more. Defaults to 1000; count still reports every problem found."},
+		"cells": {Type: "object", Description: "xlsx.write_cells: cell addresses to write, such as {B2: Acme, Sheet1!D7: 2026-10-01, Total: {formula: SUM(E2:E9)}}. " +
+			"A value writes the cell, null clears it, {value: v, type: t} pins its type, {formula: text} writes a formula. " +
+			"An address is a cell, Sheet!cell, or a defined name for one cell."},
+		"output": {Type: "string", Description: "xlsx.write_cells: workbook to write the result to, leaving path as it was, so a template can be filled many times. " +
+			"xlsx.convert: the csv, json, or jsonl file to write."},
+		"operation": {Type: "string", Enum: []any{"add", "copy", "rename", "delete"},
+			Description: "What xlsx.sheet does: add a sheet named sheet, copy sheet to to, rename sheet to to, or delete sheet."},
+		"to": {Type: "string", Description: "xlsx.sheet: the new name for copy and rename."},
+		"if_exists": {Type: "string", Enum: []any{"fail", "skip", "replace"},
+			Description: "What xlsx.sheet does when the sheet to create already exists: fail (default), skip with a warning, or replace its contents."},
+		"position": {Description: "xlsx.sheet: 1-based position of the sheet add or copy creates; by default an added sheet goes last and a copy right after its source."},
+		"encoding": {Type: "string", Enum: []any{"utf-8", "utf-8-bom", "shift_jis", "cp932", "windows-31j", "sjis", "ms932"},
+			Description: "Encoding of a csv file: the input of xlsx.write and xlsx.append, or the output of xlsx.convert. utf-8 (default), utf-8-bom, or shift_jis (also cp932, windows-31j)."},
+		"delimiter": {Type: "string", Description: "Field separator of a csv file, one character; a comma by default."},
+		"instruction": {Type: "string", Description: "xlsx.extract: what to find on the sheet, such as 'A supplier quote; find the quote number, delivery date, and total'. " +
+			"Sent to the model with the sheet's cells; must not contain a secret."},
+		"schema": {Type: "object", Description: "xlsx.extract: a JSON Schema with type: object whose properties name the fields to find. " +
+			"Each property becomes an output holding the typed value of the cell the model names; a property's type (string, number, integer, boolean; string with format date or date-time) pins how the cell is read."},
+		"send_values": boolOrRef("xlsx.extract: list every cell's text for the model (default). false lists non-text cells by kind only, so amounts and dates stay on the host."),
+		"cache":       boolOrRef("xlsx.extract: keep the cells the model named by sheet layout, so a repeated layout needs no model call (default true)."),
+		"llm":         {Type: "object", Description: "xlsx.extract: the model to ask, replacing the DAG-level llm block; the same fields as that block."},
 	},
 }
 

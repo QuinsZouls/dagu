@@ -27,6 +27,11 @@ const extractBatchSource = `async (batch, input) => (await batch.extract(input.i
 
 const telemetryPath = "/v1/traces"
 
+// actResponseFormat names the model answer that picks the element an act
+// instruction describes. The answer's twoStep field makes the runtime ask
+// the model for a second action and perform it too.
+const actResponseFormat = "Act"
+
 const (
 	// pageCallTimeout bounds a page read or screenshot, so a page that stops
 	// responding fails the step instead of hanging it.
@@ -323,6 +328,12 @@ func (e *stagehandEngine) Act(ctx context.Context, instruction string, variables
 }
 
 func (e *stagehandEngine) Replay(ctx context.Context, recorded recordedAction, variables map[string]string, timeout time.Duration) (bool, error) {
+	// The runtime types into or fills a hidden element without failing, so
+	// a recorded element that is now hidden, such as a field in a closed
+	// dialog, counts as a miss.
+	if !e.targetVisible(ctx, recorded.Selector) {
+		return false, ctx.Err()
+	}
 	action := stagehand.Action{
 		Selector:    recorded.Selector,
 		Description: recorded.Description,
@@ -344,6 +355,21 @@ func (e *stagehandEngine) Replay(ctx context.Context, recorded recordedAction, v
 		return false, nil
 	}
 	return result.Data.Success, nil
+}
+
+// targetVisible reports whether selector, resolved as a replayed action
+// resolves it, matches a visible element. It reports false when the page
+// cannot tell, including when the page was lost: no action has run yet, so
+// a lost page is a miss, never an action that may have taken effect.
+func (e *stagehandEngine) targetVisible(ctx context.Context, selector string) bool {
+	visible, err := boundCall(ctx, e.pageCallTimeout, func(ctx context.Context) (bool, error) {
+		page, err := e.page(ctx)
+		if err != nil {
+			return false, err
+		}
+		return page.Locator(selector).IsVisible(ctx)
+	})
+	return err == nil && visible
 }
 
 // sessionLost returns an error wrapping errPageSessionLost when an act call
@@ -632,12 +658,18 @@ func stagehandGenerate(generate generateFunc) stagehand.LLMGenerateFunc {
 		if err != nil {
 			return stagehand.LLMGenerateResult{}, err
 		}
+		answer := resp.JSON
+		if req.SchemaName == actResponseFormat {
+			if answer, err = singleStep(answer); err != nil {
+				return stagehand.LLMGenerateResult{}, err
+			}
+		}
 		return stagehand.StructuredGenerateResult(stagehand.LLMStructuredGenerateResult{
 			Role: stagehand.LLMRoleAssistant,
 			Content: stagehand.LLMMessageContent{
-				stagehand.TextContentBlock(stagehand.LLMTextContent{Type: "text", Text: string(resp.JSON)}),
+				stagehand.TextContentBlock(stagehand.LLMTextContent{Type: "text", Text: string(answer)}),
 			},
-			StructuredContent: resp.JSON,
+			StructuredContent: answer,
 			Usage: &stagehand.LLMUsage{
 				InputTokens:  resp.Usage.Input,
 				OutputTokens: resp.Usage.Output,
@@ -645,6 +677,25 @@ func stagehandGenerate(generate generateFunc) stagehand.LLMGenerateFunc {
 			},
 		}), nil
 	}
+}
+
+// singleStep turns off the second action an act answer asks for, so an act
+// performs only the one action its instruction describes. An answer that is
+// not an object is returned unchanged for the runtime to reject.
+func singleStep(answer json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(answer, &fields); err != nil {
+		return answer, nil
+	}
+	if _, ok := fields["twoStep"]; !ok {
+		return answer, nil
+	}
+	fields["twoStep"] = json.RawMessage("false")
+	single, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("encode act answer: %w", err)
+	}
+	return single, nil
 }
 
 func messageText(content stagehand.LLMMessageContent) (string, error) {

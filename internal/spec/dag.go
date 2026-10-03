@@ -678,6 +678,9 @@ type dagBuildState struct {
 	spec   *dag
 	result *ir.DAG
 	errs   ir.ErrorList
+	// ownEnv counts the DAG's own env entries before base-config entries are
+	// composed in front of them.
+	ownEnv int
 }
 
 func newDAGBuildState(ctx buildContext, spec *dag) *dagBuildState {
@@ -720,6 +723,7 @@ func (s *dagBuildState) prepareParamEnvStage() {
 
 func (s *dagBuildState) runFieldStages() {
 	s.errs = append(s.errs, runTransformers(s.ctx, s.spec, s.result)...)
+	s.ownEnv = len(s.result.Env)
 }
 
 func (s *dagBuildState) composeInheritedContext() {
@@ -943,6 +947,11 @@ func (s *dagBuildState) capturePresolvedBuildEnv() {
 func (s *dagBuildState) markEnvEvaluated() {
 	s.result.EnvEvaluated = !s.ctx.opts.Has(buildFlagNoEval)
 	s.result.RuntimeResolved = s.ctx.opts.RuntimeResolved || (s.result.EnvEvaluated && len(s.result.Dotenv) == 0)
+	s.result.RootEnvSpan = ir.EnvSpan{}
+	if s.result.EnvEvaluated {
+		end := len(s.result.Env)
+		s.result.RootEnvSpan = ir.EnvSpan{Start: max(end-s.ownEnv, 0), End: end}
+	}
 }
 
 func (s *dagBuildState) finish() (*ir.DAG, error) {
