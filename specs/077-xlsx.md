@@ -15,24 +15,26 @@ matching rules, modes, shape checks, the foreach aggregate, and every
 error, the lock file, artifacts including a DAG with artifacts disabled,
 validate with every problem kind, `max_problems`, the stderr lines, and
 `on_problem: fail`, the human task that follows a validation, write_cells
-with its value forms, into a copy, in a foreach, and every error, sheet
+with its value forms, `merge`, into a copy, in a foreach, and every error,
+merged cells met by appends, updates, and write_cells, sheet
 operations with every mode and error, convert to csv, json, and jsonl
 with every encoding and error, every `dagu dry` check, every validation
 message in Errors, the `dagu xlsx` commands with their flags and text
 formats, and extract with a scripted model: the cells the model names are
-read with their types, a repeated layout with the same instruction and
-schema makes no model request, a changed layout or a changed schema asks
-again, `send_values:
-false` keeps values out of the request, a secret in the instruction stops
-the step before any request, and `dagu xlsx cache clear` and `dagu rm
+read with their types, including a merged region and Japanese text under
+a pinned type, a repeated layout with the same instruction and schema
+makes no model request, a form of the same template with a box left
+blank is read from the cache, a changed layout, a changed schema, or a
+label renamed in place asks again, the cell cap and the listing size cap
+stop the step before any request, `send_values: false` keeps values out
+of the request, a secret in the instruction stops the step before any
+request, and `dagu xlsx cache clear` and `dagu rm
 --history` drop the cached cells. Every workflow in Examples has a
 fixture.
 
 Conformance exceptions, behavior that a black-box run cannot observe or
 set up and that unit tests of `internal/cmn/workbook` cover instead:
-`password` (nothing in Dagu writes a protected workbook); writes that
-meet a merged cell in `update_rows`, `write_cells`, and appends (nothing
-in Dagu creates a merged cell); the styles,
+`password` (nothing in Dagu writes a protected workbook); the styles,
 hyperlinks, merged regions, and tables that `mode: replace` clears,
 `style: table` formatting, style copying, and column widths (not readable
 through `xlsx.read`; that a replace empties the values is covered); the
@@ -41,10 +43,8 @@ atomic save and symbolic links; a lock file another process holds,
 `wait_for_unlock` timing, and Windows sharing violations; the consequences
 of a rename or delete for formulas and defined names and what a copy
 leaves behind (library behavior); the dry check leaving an unopenable
-workbook to the run; `.xls` and `.ods` beyond the extension check; merged
-regions in the extract listing and the extract cell cap (no fixture can
-merge cells or write thousands of cells cheaply). Which cell a real model
-names is not a conformance matter: the scripted model answers
+workbook to the run; `.xls` and `.ods` beyond the extension check. Which
+cell a real model names is not a conformance matter: the scripted model answers
 deterministically, and the suite proves what the engine does with an
 answer. The MCP `workbook` target is covered by the Spec 021 suite.
 
@@ -138,6 +138,7 @@ working directory. A `password` opens a protected workbook.
 | Number | JSON number. Integral values within 2^53 are integers. |
 | Number with a date, time, or date-time format | ISO 8601 text: `2026-10-01`, `15:04:05`, or `2026-10-01T14:30:00`. A serial with a fraction under a date-only format is a date-time. Built-in formats 14 to 22, 27 to 36, 45 to 47, and 50 to 58 count, and so does a custom format with date or time tokens outside quotes, such as `yyyy"年"m"月"d"日"`. `[h]:mm` counts elapsed time and stays a number. The 1900 and 1904 date systems are honored. |
 | Text, including text-formatted numbers | String, so leading zeros survive. `trim: true` removes surrounding white space, including the full-width space U+3000. |
+| Text under a pinned `number`, `integer`, `date`, or `datetime` | Full-width digits and punctuation are read as their ASCII forms, so `１２３，４５６` is 123456 and `２０２６／１０／０３` is `2026-10-03`. A number may carry a thousands separator, a `¥` or `￥` before it, or `円` after it: `￥123,000` and `123,000円` are 123000. A date may be written `2026年10月3日`, `2026.10.3`, or in an era, long or short: `令和8年10月3日`, `令和元年5月1日`, `R8.10.3`, `H31/4/30`, with 明治 (M, 1868), 大正 (T, 1912), 昭和 (S, 1926), 平成 (H, 1989), and 令和 (R, 2019), each from the day it began, so `令和元年4月30日`, before 令和 began on 2019-05-01, is refused; a time of day may follow a kanji or era date, as `令和8年10月3日 14:30`. A weekday in parentheses, such as `（金）`, is not read. The failure message quotes the text as the cell holds it. |
 | Boolean | `true` or `false`. |
 | Formula | Its cached value. `formulas: text` yields `=` and the formula; `formulas: calculate` evaluates it. A formula without a cached value is evaluated with the warning `Sheet!B2: formula had no cached value; evaluated`; one that cannot be evaluated is null with `Sheet!B3: formula NA() could not be evaluated: #N/A`. |
 | Error such as `#N/A` | Null, with the warning `Sheet!B3: error cell #N/A`. |
@@ -467,16 +468,23 @@ region is listed once as `A1:D1 [text,bold]: 御見積書`. `send_values:
 false` lists a non-text cell as its kind only, `B7 [number]`, so amounts
 and dates stay on the host. More than 2000 listed cells fails with
 `quote.xlsx Sheet1: 2415 cells in Sheet1!A1:H600 is more than 2000; set
-range to the part of the sheet that holds the fields`. Nothing else is
-sent: no variables and no screenshots. An `instruction` or a property
+range to the part of the sheet that holds the fields`. A listing longer
+than 200 KB fails the same way before any request, so a sheet that could
+not fit a model context is refused on the host: `quote.xlsx Sheet1: the
+listing of Sheet1!A1:H600 is 412 KB, more than 200 KB; set range to the
+part of the sheet that holds the fields`. Nothing else is sent: no
+variables and no screenshots. An `instruction` or a property
 `description` that holds the value of a declared secret of four or more
 characters fails before any model call, and secret values are masked in
 the text sent.
 
 The model answers through one `respond` tool whose parameters list each
 property as an A1 address, with or without a sheet, or `null` for a field
-the sheet lacks. An answer that is not an object, or that names something
-other than one cell within the listed sheet and range, is unusable: the
+the sheet lacks, and `labels`, the addresses of the cells that are labels
+or headings rather than values, which the cache watches; a property named
+`labels` is refused at validation. An answer that is not an object, that
+names something other than one cell within the listed sheet and range, or
+whose `labels` is not a list of addresses, is unusable: the
 next configured model is asked, and when every model's answer is unusable
 the step fails with `model request failed: <provider>/<model>: ...` naming
 each answer's fault. An empty cell within the range is a null value, since
@@ -485,7 +493,8 @@ would. A property's `type` pins the cell: `number`, `integer`, `boolean`,
 `string`, and `string` with `format: date` or `date-time`; a property
 without a type gets the cell's own typed value. A cell that fails its type
 fails the step with the usual `quote.xlsx Sheet1!B7: expected number,
-found "n/a"`. An empty cell or an absent field is null.
+found "n/a"`; Japanese text such as `￥123,000` or `令和8年10月15日` is read
+as Typing describes. An empty cell or an absent field is null.
 
 The step takes the DAG-level `llm` block, or `with.llm`, which replaces it,
 as browser steps do. Several models are tried in order, each set up when
@@ -500,19 +509,26 @@ With `cache: true`, the default, the answered addresses are kept by sheet
 layout under `<data dir>/xlsx/cache/<dag>/<step>.json`. The layout is the
 sheet's shape: which cells hold something, their kinds and emphasis, and
 the merged regions, so two forms from one sender in the same template
-share it while their values differ. Each cached cell also keeps the label
-beside it, the nearest text cell to its left or above, which must still
-read the same. A later run whose layout, labels, instruction, and schema
-(the property names, types, formats, and descriptions) match reads the cached cells
-without a model call (`source: cache`). A layout not seen before asks the
-model; an entry whose instruction or schema changed, whose label moved or
-was renamed, or whose address no longer names one cell is replaced after
-the model answers. A field the model answered as absent has no label to
-watch, so it stays absent while the layout holds; a sender that adds the
-field changes the layout and is asked again, while a label renamed in
-place without any cell added or removed is noticed only through the
-fields that were found. An entry is kept only when the step succeeds; a
-failed step changes nothing. `cache: false` asks the model every run.
+share it while their values differ. The entry also keeps a digest of the
+text of every label the model named, and of the label beside each
+answered cell, the nearest text cell to its left or above, and the
+addresses of the cells that were listed. A later run whose layout,
+instruction, and schema (the property names, types, formats, and
+descriptions) match, and whose labels all still read the same, reads the
+cached cells without a model call (`source: cache`). A run of another
+layout is served by an entry of the same instruction and schema whose
+labels all hold and whose listed cells include every cell of this run,
+so a form of the same template with a box left blank is read from the
+cache, with the blank field null, while a form that lists a cell no
+entry has seen asks the model, so a blank box recorded earlier never
+hides a value. A layout no entry serves asks the model; an entry whose
+instruction or schema changed, whose label moved or was renamed, or
+whose address no longer names one cell is replaced after the model
+answers. A label renamed in place is noticed wherever the model named a
+label, including the label of a field the sheet lacked; a text cell the
+model did not name is not watched. An entry is kept only when the step
+succeeds; a failed step changes nothing. `cache: false` asks the model
+every run.
 
 `dagu dry` checks that the workbook and the sheet exist, nothing about the
 model.
@@ -530,6 +546,16 @@ A merged cell is one cell: an address inside it, or a range or defined name
 covering exactly its area, as Excel names a merged cell, writes its
 top-left cell, and two addresses inside one merged cell fail with `"B10"
 and "C10" name the same merged cell Sheet1!B10:D10`.
+`merge` lists ranges to merge before the cells are written, such as
+`[A1:D1, B10:D10]`, so a filled template can carry a title across its
+width; an address inside a merged range then writes its top-left cell.
+A range that is already merged exactly is left as it is. A range that
+overlaps another merged region fails with `template.xlsx: merge A1:D1
+overlaps merged cell Sheet1!B1:E1`, and one covering a cell other than
+its top-left that holds a value or formula fails with `template.xlsx:
+merge B10:D10 would discard the value of Sheet1!C10; clear it first`,
+since Excel keeps only the top-left value of a merged cell; clear the
+cell in an earlier step.
 A value is written as a cell value, with an
 ISO date or date-time string becoming a date and text in the canonical
 form of a number becoming a number: an optional leading `-`, digits with
@@ -555,8 +581,10 @@ workbook at `path` is left as it was, so one template serves many fills;
 workbook in place`; the output path takes the saved file's place in `path`
 and `artifact`.
 `changes` reports `cells_changed`, `rows_updated` as the distinct rows a
-changed cell was on, and `sheet` and `range` as the default sheet and the
-bounding box of the cells changed on it. `dry_run`, `atomic`,
+changed cell was on, `sheet` and `range` as the default sheet and the
+bounding box of the cells changed on it, and `merged`, the ranges newly
+merged, when there are any; the stdout line then ends with `(2 ranges
+merged)`. `dry_run`, `atomic`,
 `wait_for_unlock`, and `artifact` apply as for `xlsx.write`.
 
 ### Sheets
@@ -688,7 +716,10 @@ Every one of these is rejected by `dagu validate`:
   `cells.B2: use a scalar, null, {value: v, type: t}, or {formula: text}`;
   an empty formula: `cells.B2: formula must not be empty`; an `output`
   that is not a workbook: `output: out.csv: only .xlsx and .xlsm workbooks
-  are supported; save as .xlsx`.
+  are supported; save as .xlsx`; a `merge` item that is not a range of
+  cells with both corners, such as a single cell, an open end, or a
+  defined name: `merge: "A1" is not a range`; an empty `merge`: `merge must
+  not be empty`.
 - `xlsx.sheet` without `operation` or `sheet`: `operation is required for
   sheet`, `sheet is required for sheet`; `copy` or `rename` without `to`:
   `to is required for copy`; `to`, `if_exists`, `missing`, or `position`
@@ -714,6 +745,8 @@ Every one of these is rejected by `dagu validate`:
   type must be string, number, integer, or boolean`; a property named like
   a fixed output:
   `schema property "sheet" collides with an output of xlsx.extract`;
+  a property named `labels`: `schema property "labels" is reserved by
+  xlsx.extract`;
   without a model: `xlsx.extract needs a model: set llm at the DAG level
   or with.llm on the step`; `llm` on another xlsx action: `with.llm is not
   valid for xlsx.read`.
@@ -766,7 +799,11 @@ Every one of these is rejected by `dagu validate`:
 - A `write_cells` address that is not one cell: `template.xlsx: "A1:B2" is
   not a single cell`; two addresses naming one cell: `template.xlsx: "B3"
   and "$B$3" name the same cell Sheet1!B3`, or one merged cell: `"B10" and
-  "C10" name the same merged cell Sheet1!B10:D10`; a workbook to fill that does
+  "C10" name the same merged cell Sheet1!B10:D10`; a `merge` over another
+  merged region: `template.xlsx: merge A1:D1 overlaps merged cell
+  Sheet1!B1:E1`; a `merge` over a filled cell: `template.xlsx: merge
+  B10:D10 would discard the value of Sheet1!C10; clear it first`; a
+  workbook to fill that does
   not exist: `template.xlsx: workbook not found`; an `output` that is the
   workbook itself: `template.xlsx: output must be a different file from
   path; leave output out to fill the workbook in place`.
@@ -787,7 +824,10 @@ Every one of these is rejected by `dagu validate`:
   secret SHOP_TOKEN, which would be sent to the model`; a sheet past the
   cell cap: `quote.xlsx Sheet1: 2415 cells in
   Sheet1!A1:H600 is more than 2000; set range to the part of the sheet that
-  holds the fields`; a used range too large to scan, past a million cells:
+  holds the fields`; a listing past the size cap: `quote.xlsx Sheet1:
+  the listing of Sheet1!A1:H600 is 412 KB, more than 200 KB; set range to
+  the part of the sheet that holds the fields`; a used range too large to
+  scan, past a million cells:
   `quote.xlsx Sheet1: Sheet1!A1:XFD1048576 spans more than 1000000 cells;
   set range to the part of the sheet that holds the fields`; every model's
   answer unusable or every request failed: `model request failed:
