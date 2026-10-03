@@ -103,14 +103,41 @@ to prove the committed artifacts are true generator output.
 
 ## Expected rebase conflict sites
 
-Rebasing onto `dagucloud/dagu` will conflict wherever upstream touches these
-files; resolve by re-applying the removal (or regenerating), never by
-hand-merging generated code:
+Measured against two real syncs of `dagucloud/dagu` into this branch, so this
+list reflects what actually conflicts rather than what looks risky:
 
-- `api/v1/api.gen.go` — fully regenerated, ~49 k lines; conflict magnet forever
-- `api/v1/api.yaml` — license paths/schema and license-flavored response text
-- `internal/service/frontend/server.go` and
-  `internal/service/frontend/templates.go`
-- `internal/cmn/config/*` — config definition, loader, schema
-- `internal/service/incident/service.go`
-- `ui/src/App.tsx` — route wrappers and license status sync
+- A sync of 7 commits / 102 files produced **one** conflict, in `README.md`.
+- A later sync of 17 commits / 333 files produced **no conflicts at all**.
+- None of these conflicted, even though upstream edits them, because the
+  removal does not overlap upstream's hunks: `api/v1/api.gen.go`,
+  `api/v1/api.yaml`, `internal/service/frontend/server.go`,
+  `internal/service/frontend/templates.go`, `internal/cmn/config/*`,
+  `internal/service/incident/service.go`, `ui/src/App.tsx`.
+
+The real recurring hazard is **prose, not code**. Upstream's `README.md`
+describes the CLI surface of a licensed build and enumerates `dagu license`
+among the commands; taking that text verbatim re-introduces a claim this build
+does not satisfy. Resolve by keeping upstream's wording **minus the license
+command**, and by re-measuring the command count instead of trusting either
+side's number:
+
+```sh
+go build -o /tmp/dagu ./cmd && /tmp/dagu --help |
+  awk '/Available Commands:/,/^Flags:/' | grep -cE '^  [a-z]'
+```
+
+Both syncs above still report 36 commands, and `license` is not one of them.
+
+After any sync, re-run the cheap ladder before pushing — the guard is the only
+thing that notices a reappearing license token, and it scans `*.go`, not docs:
+
+```sh
+go test -count=1 ./internal/guard/ ./internal/cmn/schema/ ./internal/cmn/config/
+go fix -embedlit=false -diff ./...   # CI's "Check modernize" step; must be empty
+golangci-lint run ./...              # must report 0 issues
+grep -rniE 'dagu license|DAGU_LICENSE|License Required' --include='*.md' . \
+  | grep -vE '^(./LICENSE|./LICENSING.md|./ui/LICENSE.md|./FORK.md)'
+```
+
+When a conflict does land in generated code, resolve by re-applying the removal
+(or regenerating), never by hand-merging generated code.
