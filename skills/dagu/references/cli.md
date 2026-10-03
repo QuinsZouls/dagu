@@ -334,5 +334,4 @@ Start distributed worker: `dagu worker --worker.coordinators <host:port,...> [--
 - `dagu example [id]` — Show built-in example DAGs
 - `dagu version` — Show version
 - `dagu upgrade [--check] [--version/-v <ver>] [--dry-run] [--yes/-y]` — Self-update binary
-- `dagu license <activate|deactivate|check>` — Manage license
 - `dagu secret resolve <ref> [--workspace <name>]` — Print a registry secret's plaintext value to stdout, without a trailing newline; a workspace falls back to global like a DAG's `secrets:` entry, and an unknown workspace fails. Each read is recorded in the audit log. Local context only

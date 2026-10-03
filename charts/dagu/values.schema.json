@@ -477,25 +477,6 @@
       },
       "required": ["enabled", "className", "annotations", "host", "tls"]
     },
-    "license": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "existingSecret": {
-          "type": "string",
-          "description": "Optional license-key Secret; Dagu also supports license env/file and persisted activation sources.",
-          "maxLength": 253,
-          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
-        },
-        "secretKey": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 253,
-          "pattern": "^[-._a-zA-Z0-9]+$"
-        }
-      },
-      "required": ["existingSecret", "secretKey"]
-    },
     "auth": {
       "type": "object",
       "additionalProperties": false,
@@ -553,7 +534,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Enables chart-managed OIDC configuration. Runtime requires an active license from any Dagu-supported source."
+              "description": "Enables chart-managed OIDC configuration."
             },
             "clientId": {
               "type": "string"

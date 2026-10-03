@@ -79,7 +79,6 @@ func newServer(ctx *Context, rs *resource.Service, stores frontend.Stores, opts 
 		SchedulerStateStore:  ctx.Persistence.SchedulerStateStore,
 		SchedulerPauseStore:  ctx.Persistence.SchedulerPauseStore,
 		Caches:               ctx.Caches,
-		LicenseManager:       ctx.LicenseManager,
 		ResourceService:      rs,
 		Stores:               stores,
 	}, opts...)
@@ -113,9 +112,6 @@ func runServer(ctx *Context, _ []string, serverOpts ...frontend.ServerOption) er
 			if err := tunnelService.Stop(ctx); err != nil {
 				logger.Error(ctx, "Failed to stop tunnel service", tag.Error(err))
 			}
-		}
-		if ctx.LicenseManager != nil {
-			ctx.LicenseManager.Stop()
 		}
 		shutdownCtx, shutdownCancel := localAgentSessionShutdownContext(ctx)
 		defer shutdownCancel()

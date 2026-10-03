@@ -29,7 +29,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/eventstore"
 	"github.com/dagucloud/dagu/v2/internal/ir"
 	"github.com/dagucloud/dagu/v2/internal/launcher"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	"github.com/dagucloud/dagu/v2/internal/persis"
 	"github.com/dagucloud/dagu/v2/internal/persis/file"
 	fileartifact "github.com/dagucloud/dagu/v2/internal/persis/file/artifact"
@@ -59,13 +58,12 @@ type Context struct {
 	backend             persis.Backend
 	event               *eventstore.Service
 
-	Caches         []fileutil.CacheMetrics
-	Proc           proc.ProcHandle
-	LicenseManager *license.Manager
-	ContextStore   *cliContextStore
-	CLIContext     *cliContext
-	ContextName    string
-	Remote         *remoteClient
+	Caches       []fileutil.CacheMetrics
+	Proc         proc.ProcHandle
+	ContextStore *cliContextStore
+	CLIContext   *cliContext
+	ContextName  string
+	Remote       *remoteClient
 }
 
 // WithContext returns a new Context with a different underlying context.Context.
@@ -334,28 +332,6 @@ func NewContext(cmd *cobra.Command, flags []commandLineFlag) (*Context, error) {
 	}
 	drm := runtime.NewManager(persistence.DAGRunRepository, persistence.ProcRepository, cfg)
 
-	// Initialize license manager for server commands
-	var licMgr *license.Manager
-	switch cmd.Name() {
-	case "server", "start-all":
-		pubKey, pubKeyErr := license.PublicKey()
-		if pubKeyErr != nil {
-			logger.Warn(ctx, "Failed to load license public key", tag.Error(pubKeyErr))
-			break
-		}
-		licenseDir := file.LicenseDir(cfg)
-		licStore := file.NewLicenseStore(ctx, backend.Collection(persis.CollectionLicense))
-		licMgr = license.NewManager(license.ManagerConfig{
-			LicenseDir:        licenseDir,
-			ConfigKey:         cfg.License.Key,
-			CloudURL:          cfg.License.CloudURL,
-			CommunityFeatures: cfg.License.CommunityFeatures,
-		}, pubKey, licStore, slog.Default())
-		if err := licMgr.Start(ctx); err != nil {
-			logger.Warn(ctx, "License manager initialization failed", tag.Error(err))
-		}
-	}
-
 	// Log key configuration settings for debugging
 	logger.Debug(ctx, "Configuration loaded",
 		tag.Config(cfg.Paths.ConfigFileUsed),
@@ -394,7 +370,6 @@ func NewContext(cmd *cobra.Command, flags []commandLineFlag) (*Context, error) {
 		event:               eventService,
 		Flags:               flags,
 		Caches:              caches,
-		LicenseManager:      licMgr,
 		ContextStore:        contextStore,
 		CLIContext:          selectedContext,
 		ContextName:         selectedContextName,

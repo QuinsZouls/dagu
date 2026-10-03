@@ -16,10 +16,6 @@ import { UserPreferencesProvider } from '@/contexts/UserPreference';
 import { I18nProvider } from '@/i18n/I18nProvider';
 import Layout from '../Layout';
 
-vi.mock('@/components/LicenseBanner', () => ({
-  LicenseBanner: () => null,
-}));
-
 vi.mock('@/components/UpdateBanner', () => ({
   UpdateBanner: () => null,
 }));

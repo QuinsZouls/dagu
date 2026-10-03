@@ -80,7 +80,6 @@ vi.mock('../pages/incidents', () => ({
 vi.mock('../pages/integrations', () => ({
   default: () => <h1>Integrations</h1>,
 }));
-vi.mock('../pages/license', () => ({ default: () => <h1>License</h1> }));
 vi.mock('../pages/login', () => ({ default: () => <h1>Login</h1> }));
 vi.mock('../pages/notification-channels', () => ({
   default: () => <h1>Notification Channels</h1>,
@@ -165,16 +164,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     permissions: {
       writeDags: true,
       runDags: true,
-    },
-    license: {
-      valid: false,
-      plan: 'community',
-      expiry: '',
-      features: [],
-      gracePeriod: false,
-      community: true,
-      source: 'test',
-      warningCode: '',
     },
     paths: {
       dagsDir: '',
@@ -279,59 +268,35 @@ describe('legacy Wiki routing', () => {
   });
 });
 
-describe('App license routing', () => {
+describe('App routes without license gating', () => {
   it.each([
     { path: '/notifications', heading: 'Notifications' },
     { path: '/notification-rules', heading: 'Notification Rules' },
     { path: '/notification-channels', heading: 'Notification Channels' },
-  ])('allows $path in community mode', async ({ path, heading }) => {
-    renderAt(path);
+    { path: '/users', heading: 'Users' },
+    { path: '/audit-logs', heading: 'Audit Logs' },
+    { path: '/incidents', heading: 'Incidents' },
+    { path: '/incident-providers', heading: 'Incident Connections' },
+    { path: '/incident-policies', heading: 'Incident Routing' },
+  ])(
+    'renders $path directly with no license wall',
+    async ({ path, heading }) => {
+      renderAt(path);
 
-    expect(await screen.findByRole('heading', { name: heading })).toBeVisible();
-    expect(
-      screen.queryByRole('heading', { name: 'License Required' })
-    ).not.toBeInTheDocument();
-  });
-
-  it('keeps incident management routes behind an active license', async () => {
-    renderAt('/incidents');
-
-    await waitFor(() => {
+      expect(await screen.findByRole('heading', { name: heading })).toBeVisible();
       expect(
-        screen.getByRole('heading', { name: 'License Required' })
-      ).toBeVisible();
-    });
-    expect(
-      screen.queryByRole('heading', { name: 'Incidents' })
-    ).not.toBeInTheDocument();
-  });
+        screen.queryByRole('heading', { name: 'License Required' })
+      ).not.toBeInTheDocument();
+    }
+  );
 
-  it('updates licensed routes from the live license status', async () => {
-    useQueryMock.mockReturnValue({
-      data: {
-        valid: true,
-        plan: 'pro',
-        expiry: '2027-01-01T00:00:00Z',
-        features: ['audit'],
-        gracePeriod: false,
-        graceEndsAt: '',
-        community: false,
-        source: 'file',
-        warningCode: '',
-        error: '',
-      },
-    });
-
+  it('does not poll a license status endpoint while rendering routes', async () => {
     renderAt('/incidents');
 
     expect(
       await screen.findByRole('heading', { name: 'Incidents' })
     ).toBeVisible();
-    expect(useQueryMock).toHaveBeenCalledWith(
-      '/license/status',
-      { params: { query: { remoteNode: 'local' } } },
-      expect.objectContaining({ refreshInterval: 60_000 })
-    );
+    expect(useQueryMock).not.toHaveBeenCalled();
   });
 
   it('redirects the legacy secrets route to the secret refs section', async () => {

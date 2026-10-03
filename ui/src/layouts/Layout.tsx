@@ -1,7 +1,6 @@
 // Copyright (C) 2026 Yota Hamada
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { LicenseBanner } from '@/components/LicenseBanner';
 import { SchedulerPauseBanner } from '@/components/SchedulerPauseBanner';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -253,7 +252,6 @@ function Content({ navbarColor, children }: LayoutProps) {
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ContentNavigation pathname={location.pathname} />
           <UpdateBanner />
-          <LicenseBanner />
           <SchedulerPauseBanner />
           <div className="min-h-0 flex-1 overflow-auto p-4 md:p-6 w-full">
             {children}

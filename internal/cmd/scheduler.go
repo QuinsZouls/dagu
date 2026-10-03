@@ -76,7 +76,6 @@ func newScheduler(ctx *Context, deps scheduler.Dependencies) (*scheduler.Schedul
 	deps.DAGRunLeaseStore = ctx.Persistence.DAGRunLeaseStore
 	deps.DispatchTaskStore = ctx.Persistence.DispatchTaskStore
 	deps.WorkerHeartbeatStore = ctx.Persistence.WorkerHeartbeatStore
-	deps.LicenseManager = ctx.LicenseManager
 	return scheduler.New(ctx.Config, deps)
 }
 

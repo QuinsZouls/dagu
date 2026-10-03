@@ -21,11 +21,9 @@ import {
 import { AppBarContext } from '@/contexts/AppBarContext';
 import { TOKEN_KEY, useIsAdmin } from '@/contexts/AuthContext';
 import { useConfig } from '@/contexts/ConfigContext';
-import { useLicense } from '@/hooks/useLicense';
 import dayjs from '@/lib/dayjs';
 import ConfirmModal from '@/components/ui/confirm-dialog';
 import {
-  AlertTriangle,
   KeyRound,
   MoreHorizontal,
   Pencil,
@@ -39,7 +37,6 @@ import { I18nProps } from '@/i18n/I18nProps';
 import { I18nTemplate } from '@/i18n/I18nTemplate';
 
 type APIKey = components['schemas']['APIKey'];
-const COMMUNITY_API_KEY_LIMIT = 2;
 
 function surfaceLabel(surface: string): string {
   if (surface === 'rest_api') return 'REST';
@@ -56,7 +53,6 @@ function attributionLabel(key: APIKey): string {
 
 export default function APIKeysPage() {
   const config = useConfig();
-  const license = useLicense();
   const isAdmin = useIsAdmin();
   const appBarContext = useContext(AppBarContext);
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
@@ -67,9 +63,6 @@ export default function APIKeysPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingKey, setEditingKey] = useState<APIKey | null>(null);
   const [deletingKey, setDeletingKey] = useState<APIKey | null>(null);
-  const hasActiveLicense = license.valid || license.gracePeriod;
-  const communityLimitReached =
-    !hasActiveLicense && apiKeys.length >= COMMUNITY_API_KEY_LIMIT;
 
   // Set page title
   useEffect(() => {
@@ -160,7 +153,6 @@ export default function APIKeysPage() {
           onClick={() => setShowCreateModal(true)}
           size="sm"
           className="h-8"
-          disabled={communityLimitReached}
         >
           <Plus className="h-4 w-4 mr-1.5" />
           <I18nText text={'Create API Key'} />
@@ -170,29 +162,6 @@ export default function APIKeysPage() {
       {error && (
         <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
           {error}
-        </div>
-      )}
-
-      {communityLimitReached && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-foreground"
-        >
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-medium">
-              <I18nText
-                text={'Community installs can manage up to 2 API keys.'}
-              />
-            </p>
-            <p className="mt-1">
-              <I18nText
-                text={
-                  'Existing keys remain active, but new key creation is blocked until extra keys are revoked or a license is configured.'
-                }
-              />
-            </p>
-          </div>
         </div>
       )}
 

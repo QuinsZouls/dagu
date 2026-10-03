@@ -375,7 +375,6 @@ jobs:
       - name: Run browser E2E tests
         env:
           CI: "true"
-          DAGU_LICENSE_PRIVKEY_B64: ${{ secrets.DAGU_LICENSE_PRIVKEY_B64 }}
           PLAYWRIGHT_FULLY_PARALLEL: "true"
           PLAYWRIGHT_TEST_ARGS: --shard=${{ matrix.shard }}/${{ matrix.shard_total }}
         run: |

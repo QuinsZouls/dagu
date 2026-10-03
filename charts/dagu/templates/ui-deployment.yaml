@@ -66,13 +66,6 @@ spec:
                   name: {{ .Values.auth.basic.existingSecret | quote }}
                   key: {{ .Values.auth.basic.passwordKey | quote }}
 {{- end }}
-{{- with .Values.license.existingSecret }}
-            - name: DAGU_LICENSE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . | quote }}
-                  key: {{ $.Values.license.secretKey | quote }}
-{{- end }}
 {{- if .Values.auth.oidc.enabled }}
             - name: DAGU_AUTH_OIDC_CLIENT_SECRET
               valueFrom:

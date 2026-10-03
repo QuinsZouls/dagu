@@ -34,12 +34,11 @@ import (
 )
 
 type Service struct {
-	store            incidentmodel.Store
-	http             *http.Client
-	logger           *slog.Logger
-	incidentsEnabled func() bool
-	publicURL        func() string
-	retry            DeliveryRetryConfig
+	store     incidentmodel.Store
+	http      *http.Client
+	logger    *slog.Logger
+	publicURL func() string
+	retry     DeliveryRetryConfig
 }
 
 type DeliveryRetryConfig struct {
@@ -74,14 +73,6 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func WithIncidentsEnabled(enabled func() bool) Option {
-	return func(s *Service) {
-		if enabled != nil {
-			s.incidentsEnabled = enabled
-		}
-	}
-}
-
 func WithPublicURL(publicURL string) Option {
 	return WithPublicURLResolver(func() string { return publicURL })
 }
@@ -110,11 +101,10 @@ func WithDeliveryRetry(cfg DeliveryRetryConfig) Option {
 
 func New(store incidentmodel.Store, opts ...Option) *Service {
 	svc := &Service{
-		store:            store,
-		http:             &http.Client{Timeout: 30 * time.Second},
-		logger:           slog.Default(),
-		incidentsEnabled: func() bool { return true },
-		publicURL:        func() string { return "" },
+		store:     store,
+		http:      &http.Client{Timeout: 30 * time.Second},
+		logger:    slog.Default(),
+		publicURL: func() string { return "" },
 		retry: DeliveryRetryConfig{
 			MaxAttempts:    3,
 			InitialBackoff: 250 * time.Millisecond,
@@ -132,10 +122,6 @@ func (s *Service) SetPublicURLResolver(resolver func() string) {
 		return
 	}
 	s.publicURL = resolver
-}
-
-func (s *Service) incidentsAllowed() bool {
-	return s.incidentsEnabled == nil || s.incidentsEnabled()
 }
 
 func (s *Service) ListProviders(ctx context.Context) ([]*incidentmodel.Provider, error) {
@@ -346,7 +332,7 @@ func (s *Service) SendProviderTest(ctx context.Context, providerID string) (*Tes
 }
 
 func (s *Service) NotificationDestinations() []string {
-	if !s.incidentsAllowed() || s.store == nil {
+	if s.store == nil {
 		return nil
 	}
 	ctx := context.Background()
@@ -380,7 +366,7 @@ func (s *Service) NotificationDestinations() []string {
 }
 
 func (s *Service) NotificationDestinationsForEvent(event chatbridge.NotificationEvent) []string {
-	if !s.incidentsAllowed() || !incidentEventSupported(event) {
+	if !incidentEventSupported(event) {
 		return nil
 	}
 	if isRecoveryEvent(event.Type) {
@@ -428,9 +414,6 @@ func (s *Service) resolveDestinationsForEvent(ctx context.Context, event chatbri
 }
 
 func (s *Service) FlushNotificationBatch(ctx context.Context, destination string, batch chatbridge.NotificationBatch, _ bool) bool {
-	if !s.incidentsAllowed() {
-		return true
-	}
 	if parsedState := parseStateDestinationID(destination); parsedState.OK {
 		for _, event := range batch.Events {
 			if !s.resolveIncidentState(ctx, parsedState.ProviderID, parsedState.DedupKey, event) {

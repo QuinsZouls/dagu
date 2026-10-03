@@ -114,17 +114,16 @@ const (
 	SectionMonitoring                            // 128
 	SectionGitSync                               // 256
 	SectionTunnel                                // 512
-	SectionLicense                               // 1024
-	SectionProc                                  // 2048
+	SectionProc                                  // 1024
 
 	// SectionAll combines all sections (useful for ServiceNone/CLI)
-	SectionAll = SectionServer | SectionScheduler | SectionWorker | SectionCoordinator | SectionUI | SectionQueues | SectionMonitoring | SectionGitSync | SectionTunnel | SectionLicense | SectionProc
+	SectionAll = SectionServer | SectionScheduler | SectionWorker | SectionCoordinator | SectionUI | SectionQueues | SectionMonitoring | SectionGitSync | SectionTunnel | SectionProc
 )
 
 // serviceRequirements maps services to their required config sections using bitwise OR.
 var serviceRequirements = map[Service]ConfigSection{
 	ServiceNone:        SectionAll,
-	ServiceServer:      SectionServer | SectionCoordinator | SectionUI | SectionQueues | SectionMonitoring | SectionGitSync | SectionTunnel | SectionLicense | SectionProc,
+	ServiceServer:      SectionServer | SectionCoordinator | SectionUI | SectionQueues | SectionMonitoring | SectionGitSync | SectionTunnel | SectionProc,
 	ServiceScheduler:   SectionScheduler | SectionCoordinator | SectionQueues | SectionProc,
 	ServiceWorker:      SectionWorker | SectionCoordinator | SectionProc,
 	ServiceCoordinator: SectionCoordinator | SectionProc,
@@ -313,7 +312,6 @@ func (l *ConfigLoader) buildConfig(def Definition) (*Config, error) {
 		{SectionMonitoring, func() { l.loadMonitoringConfig(&cfg, def) }},
 		{SectionGitSync, func() { l.loadGitSyncConfig(&cfg, def) }},
 		{SectionTunnel, func() { l.loadTunnelConfig(&cfg, def) }},
-		{SectionLicense, func() { l.loadLicenseConfig(&cfg, def) }},
 	}
 
 	for _, sl := range sectionLoaders {
@@ -1702,18 +1700,6 @@ func setDefaultIfNotPositive(target *int, defaultValue int) {
 	}
 }
 
-func (l *ConfigLoader) loadLicenseConfig(cfg *Config, def Definition) {
-	if def.License == nil {
-		return
-	}
-	cfg.License.Key = def.License.Key
-	cfg.License.CloudURL = def.License.CloudURL
-	// parseStringList trims spaces and skips empty parts so both a
-	// comma-separated env value ("rbac, sso") and a YAML list normalize to a
-	// clean []string.
-	cfg.License.CommunityFeatures = parseStringList(def.License.CommunityFeatures)
-}
-
 func (l *ConfigLoader) loadExecutionModeConfig(cfg *Config, _ Definition) {
 	mode := ExecutionMode(l.v.GetString("default_execution_mode"))
 	if mode == "" {
@@ -2308,11 +2294,6 @@ var envBindings = []envBinding{
 	{key: "tunnel.rate_limiting.login_attempts", env: "TUNNEL_RATE_LIMITING_LOGIN_ATTEMPTS"},
 	{key: "tunnel.rate_limiting.window_seconds", env: "TUNNEL_RATE_LIMITING_WINDOW_SECONDS"},
 	{key: "tunnel.rate_limiting.block_duration_seconds", env: "TUNNEL_RATE_LIMITING_BLOCK_DURATION_SECONDS"},
-
-	// License
-	{key: "license.key", env: "LICENSE_KEY"},
-	{key: "license.cloud_url", env: "LICENSE_CLOUD_URL"},
-	{key: "license.community_features", env: "LICENSE_COMMUNITY_FEATURES"},
 
 	// GitSync
 	{key: "git_sync.enabled", env: "GITSYNC_ENABLED"},

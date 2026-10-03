@@ -14,7 +14,6 @@ import (
 	authmodel "github.com/dagucloud/dagu/v2/internal/auth"
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger"
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger/tag"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	authservice "github.com/dagucloud/dagu/v2/internal/service/auth"
 	"github.com/dagucloud/dagu/v2/internal/service/trustedproxyprovision"
 )
@@ -37,7 +36,6 @@ type TrustedProxyLoginConfig struct {
 	GroupsRequired       bool
 	Provision            TrustedProxyProvisioner
 	AuthService          TrustedProxyTokenService
-	LicenseChecker       license.Checker
 	InitialSetupComplete func(context.Context) (bool, error)
 	LoginBasePath        string
 }
@@ -60,11 +58,6 @@ func TrustedProxyLoginHandler(cfg *TrustedProxyLoginConfig) http.Handler {
 			return
 		}
 		if !allowTrustedProxyAfterInitialSetup(w, r, cfg) {
-			return
-		}
-		if cfg.LicenseChecker != nil && !cfg.LicenseChecker.IsFeatureEnabled(license.FeatureSSO) {
-			logger.Warn(r.Context(), "Proxy login denied", slog.String("reason", "license_unavailable"))
-			writeTrustedProxyError(w, http.StatusForbidden, "access denied")
 			return
 		}
 		if cfg.Provision == nil || cfg.AuthService == nil {

@@ -9,7 +9,6 @@ import (
 
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/eventstore"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	notificationmodel "github.com/dagucloud/dagu/v2/internal/notification"
 	"github.com/dagucloud/dagu/v2/internal/persis"
 	"github.com/dagucloud/dagu/v2/internal/service/chatbridge"
@@ -56,15 +55,8 @@ func newIncidentMonitor(cfg *config.Config, deps Dependencies) *chatbridge.Notif
 	if deps.NewIncidentLease != nil {
 		lease = deps.NewIncidentLease()
 	}
-	var checker license.Checker
-	if deps.LicenseManager != nil {
-		checker = deps.LicenseManager.Checker()
-	}
 	service := incidentservice.New(
 		deps.IncidentStore,
-		incidentservice.WithIncidentsEnabled(func() bool {
-			return license.HasActiveLicense(checker)
-		}),
 		incidentservice.WithPublicURL(cfg.Server.PublicURL),
 	)
 	monitorConfig := chatbridge.DefaultNotificationMonitorConfig()

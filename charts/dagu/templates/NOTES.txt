@@ -55,12 +55,11 @@ OIDC authentication is configured.
   Register the value of DAGU_AUTH_OIDC_CLIENT_URL plus /oidc-callback with the provider.
 {{- end }}
   Complete builtin administrator setup before the first OIDC login.
-  OIDC/SSO requires an active Dagu license.
 
 {{- end }}
-{{- if or (eq .Values.auth.mode "basic") .Values.license.existingSecret .Values.auth.oidc.enabled }}
+{{- if or (eq .Values.auth.mode "basic") .Values.auth.oidc.enabled }}
 
-Chart-managed authentication and license Secret values are read when the UI pod starts.
+Chart-managed authentication Secret values are read when the UI pod starts.
   After changing a referenced Secret value, restart the UI deployment:
   kubectl --namespace {{ .Release.Namespace }} rollout restart deployment {{ include "dagu.componentName" (dict "root" . "component" "ui") }}
 

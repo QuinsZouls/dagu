@@ -191,7 +191,6 @@ const english = {
   Action: 'Action',
   Actions: 'Actions',
   Activate: 'Activate',
-  'Activate License Key': 'Activate License Key',
   'Activating...': 'Activating...',
   active: 'active',
   Active: 'Active',
@@ -397,7 +396,6 @@ const english = {
   Connections: 'Connections',
   'Connections are configured once, then selected by Global, workspace, or DAG incident routing.':
     'Connections are configured once, then selected by Global, workspace, or DAG incident routing.',
-  'console.dagu.sh': 'console.dagu.sh',
   'Continue scanning': 'Continue scanning',
   'Coordinator Service': 'Coordinator Service',
   Copied: 'Copied',
@@ -438,7 +436,6 @@ const english = {
   Ctrl: 'Ctrl',
   Current: 'Current',
   'Current item': 'Current item',
-  'Current License': 'Current License',
   'Current owner:': 'Current owner:',
   'Current time': 'Current time',
   Custom: 'Custom',
@@ -483,7 +480,6 @@ const english = {
   Date: 'Date',
   'Date preset': 'Date preset',
   'Date range mode': 'Date range mode',
-  'Deactivate License': 'Deactivate License',
   'Deactivating...': 'Deactivating...',
   Default: 'Default',
   'Default for every DAG unless a workspace or DAG is configured.':
@@ -559,7 +555,6 @@ const english = {
   'Discard Changes': 'Discard Changes',
   'Discard local changes to': 'Discard local changes to',
   'Disk Usage': 'Disk Usage',
-  'Dismiss license expiry notification': 'Dismiss license expiry notification',
   'Dismiss update notification': 'Dismiss update notification',
   'Distributed Workers': 'Distributed Workers',
   'Do you really want to delete this DAG?':
@@ -627,8 +622,6 @@ const english = {
   'Enter a search term and press Enter or click Search':
     'Enter a search term and press Enter or click Search',
   'Enter custom DAG-Run ID': 'Enter custom DAG-Run ID',
-  'Enter your license or trial key to activate Dagu features. You can obtain a key from':
-    'Enter your license or trial key to activate Dagu features. You can obtain a key from',
   'Enter: Confirm': 'Enter: Confirm',
   'Enter: select': 'Enter: select',
   entries: 'entries',
@@ -662,8 +655,6 @@ const english = {
   'Execution history was not found.': 'Execution history was not found.',
   'Execution:': 'Execution:',
   Executions: 'Executions',
-  'Existing keys remain active, but new key creation is blocked until extra keys are revoked or a license is configured.':
-    'Existing keys remain active, but new key creation is blocked until extra keys are revoked or a license is configured.',
   'Existing open incidents still resolve when the DAG recovers.':
     'Existing open incidents still resolve when the DAG recovers.',
   'exit codes:': 'exit codes:',
@@ -787,8 +778,6 @@ const english = {
   'in:': 'in:',
   Inactive: 'Inactive',
   'Incident Connections': 'Incident Connections',
-  'Incident connections and routing require an active Dagu license or trial. Visit the':
-    'Incident connections and routing require an active Dagu license or trial. Visit the',
   'Incident Routing': 'Incident Routing',
   'Incident routing mode': 'Incident routing mode',
   Incidents: 'Incidents',
@@ -833,11 +822,6 @@ const english = {
   'Last Used': 'Last Used',
   'Latest Run': 'Latest Run',
   'Latest status': 'Latest status',
-  License: 'License',
-  'License Error': 'License Error',
-  'License key': 'License key',
-  'license or trial': 'license or trial',
-  'License Required': 'License Required',
   lines: 'lines',
   'Linking to this DAG': 'Linking to this DAG',
   List: 'List',
@@ -1141,7 +1125,6 @@ const english = {
   Page: 'Page',
   'Page 1': 'Page 1',
   'page to activate one.': 'page to activate one.',
-  'page to activate your license.': 'page to activate your license.',
   'Page View': 'Page View',
   'Parameter editing and custom run IDs are disabled.':
     'Parameter editing and custom run IDs are disabled.',
@@ -1259,8 +1242,6 @@ const english = {
   'Remove incident connection': 'Remove incident connection',
   'Remove missing items from sync tracking':
     'Remove missing items from sync tracking',
-  'Remove the license from this machine and return to community mode.':
-    'Remove the license from this machine and return to community mode.',
   'Remove this DAG override and inherit workspace or Global notification rules?':
     'Remove this DAG override and inherit workspace or Global notification rules?',
   Rename: 'Rename',
@@ -1614,14 +1595,10 @@ const english = {
   'This DAG override replaces workspace and Global rules for future runs. Send test verifies delivery now.':
     'This DAG override replaces workspace and Global rules for future runs. Send test verifies delivery now.',
   'This DAG uses': 'This DAG uses',
-  'This feature requires an active Dagu license or trial. Visit the':
-    'This feature requires an active Dagu license or trial. Visit the',
   'This file can’t be rendered inline. Download it to inspect the contents.':
     'This file can’t be rendered inline. Download it to inspect the contents.',
   'This is a Slack Incoming Webhook URL. Select Slack as the provider.':
     'This is a Slack Incoming Webhook URL. Select Slack as the provider.',
-  'This license is configured via an environment variable (':
-    'This license is configured via an environment variable (',
   'This month': 'This month',
   'This permanently removes run records, logs, artifacts, and related run data.':
     'This permanently removes run records, logs, artifacts, and related run data.',
@@ -1638,8 +1615,6 @@ const english = {
   'this Wiki page': 'this Wiki page',
   'This Wiki page has been modified externally, possibly by another process or user.':
     'This Wiki page has been modified externally, possibly by another process or user.',
-  'This will deactivate the license on this machine and return to community mode. Licensed features (audit, RBAC, SSO) will be disabled immediately.':
-    'This will deactivate the license on this machine and return to community mode. Licensed features (audit, RBAC, SSO) will be disabled immediately.',
   'This will re-execute': 'This will re-execute',
   'This will remove': 'This will remove',
   'This workspace': 'This workspace',
@@ -1654,7 +1629,6 @@ const english = {
   'to avoid disruption': 'to avoid disruption',
   'to expose selected request headers as':
     'to expose selected request headers as',
-  'to keep licensed features.': 'to keep licensed features.',
   'to navigate DAGs': 'to navigate DAGs',
   'to navigate histories': 'to navigate histories',
   'to navigate runs': 'to navigate runs',
@@ -1737,8 +1711,6 @@ const english = {
   'View DAG': 'View DAG',
   'View DAG Definition': 'View DAG Definition',
   'View diff': 'View diff',
-  'View license status and activate a Dagu license or trial key.':
-    'View license status and activate a Dagu license or trial key.',
   'View mode': 'View mode',
   'View Raw': 'View Raw',
   'View release': 'View release',
@@ -2061,8 +2033,6 @@ const english = {
   'Update available: v{current} → {latest} {releaseLink} · Run {command} to update':
     'Update available: v{current} → {latest} {releaseLink} · Run {command} to update',
   'Use {up} {down} to navigate DAGs': 'Use {up} {down} to navigate DAGs',
-  'User management features (create, edit, delete) require a {licenseLink}. Password reset is available for all admins.':
-    'User management features (create, edit, delete) require a {licenseLink}. Password reset is available for all admins.',
   'Value is unavailable in this context':
     'Value is unavailable in this context',
   Viewer: 'Viewer',
@@ -2133,14 +2103,7 @@ const english = {
   'Write permission required': 'Write permission required',
   'Push disabled in read-only mode': 'Push disabled in read-only mode',
   'Publish {count} selected': 'Publish {count} selected',
-  'Your Dagu {license} has expired. Features will be disabled on {date}. Please {action}.':
-    'Your Dagu {license} has expired. Features will be disabled on {date}. Please {action}.',
-  'Your Dagu {license} {expiry}! Please {action} to keep licensed features.':
-    'Your Dagu {license} {expiry}! Please {action} to keep licensed features.',
-  'Your Dagu {license} {expiry}. Please {action}.':
-    'Your Dagu {license} {expiry}. Please {action}.',
   trial: 'trial',
-  license: 'license',
   upgrade: 'upgrade',
   renew: 'renew',
   'upgrade now': 'upgrade now',
@@ -2148,10 +2111,6 @@ const english = {
   'upgrade to avoid disruption': 'upgrade to avoid disruption',
   'renew to avoid disruption': 'renew to avoid disruption',
   soon: 'soon',
-  'This license is active on more machines than allowed. Deactivate extra machines or contact your administrator.':
-    'This license is active on more machines than allowed. Deactivate extra machines or contact your administrator.',
-  'There is an issue with your license. Contact your administrator.':
-    'There is an issue with your license. Contact your administrator.',
   'Open {dag} →': 'Open {dag} →',
   'Wiki pages under {folder} or containing a {link} wikilink appear here.':
     'Wiki pages under {folder} or containing a {link} wikilink appear here.',
@@ -2169,8 +2128,6 @@ const english = {
   'Page {current} of {total}': 'Page {current} of {total}',
   'Discard local changes to {item}? This cannot be undone.':
     'Discard local changes to {item}? This cannot be undone.',
-  'Enter your license or trial key to activate Dagu features. You can obtain a key from {console}.':
-    'Enter your license or trial key to activate Dagu features. You can obtain a key from {console}.',
   'from {scope}': 'from {scope}',
   'send to {channel}': 'send to {channel}',
   'Searching {type}...': 'Searching {type}...',
@@ -2278,6 +2235,24 @@ const english = {
   'Revoke Profile Token': 'Revoke Profile Token',
   'Applications using this token will immediately lose access.':
     'Applications using this token will immediately lose access.',
+  'Approval saved; resume failed.': 'Approval saved; resume failed.',
+  'All artifact files are displayed.': 'All artifact files are displayed.',
+  'All time': 'All time',
+  'Client secret': 'Client secret',
+  'Failed to delete channel': 'Failed to delete channel',
+  'Failed to save channel': 'Failed to save channel',
+  'Headers': 'Headers',
+  'Loading more artifacts...': 'Loading more artifacts...',
+  'Missing channel': 'Missing channel',
+  'No DAG-runs in the selected time range produced artifact files. Adjust the date range or filters.':
+    'No DAG-runs in the selected time range produced artifact files. Adjust the date range or filters.',
+  'No artifacts found': 'No artifacts found',
+  'Refresh token': 'Refresh token',
+  'Step': 'Step',
+  'Valid with warnings': 'Valid with warnings',
+  'Warnings': 'Warnings',
+  '· selective list, use the run to view all files':
+    '· selective list, use the run to view all files',
 } as const;
 
 export type StaticMessage = keyof typeof english;
@@ -2465,7 +2440,6 @@ const chinese = {
   Action: '操作',
   Actions: '操作',
   Activate: '激活',
-  'Activate License Key': '激活许可证密钥',
   'Activating...': '正在激活...',
   active: '活跃',
   Active: '活跃',
@@ -2670,7 +2644,6 @@ const chinese = {
   Connections: '连接',
   'Connections are configured once, then selected by Global, workspace, or DAG incident routing.':
     '连接只需配置一次，随后通过全局、工作区或 DAG 事件路由进行选择。',
-  'console.dagu.sh': 'console.dagu.sh',
   'Continue scanning': '继续扫描',
   'Coordinator Service': '协调服务',
   Copied: '已复制',
@@ -2712,7 +2685,6 @@ const chinese = {
   Ctrl: 'Ctrl',
   Current: '当前',
   'Current item': '当前项',
-  'Current License': '当前许可证',
   'Current owner:': '当前所有者:',
   'Current time': '当前时间',
   Custom: '自定义',
@@ -2757,7 +2729,6 @@ const chinese = {
   Date: '日期',
   'Date preset': '日期预设',
   'Date range mode': '日期范围模式',
-  'Deactivate License': '停用许可证',
   'Deactivating...': '正在停用...',
   Default: '默认',
   'Default for every DAG unless a workspace or DAG is configured.':
@@ -2831,7 +2802,6 @@ const chinese = {
   'Discard Changes': '放弃更改',
   'Discard local changes to': '放弃对',
   'Disk Usage': '磁盘使用',
-  'Dismiss license expiry notification': '关闭许可证过期通知',
   'Dismiss update notification': '关闭更新通知',
   'Distributed Workers': '分布式 Worker',
   'Do you really want to delete this DAG?': '确定要删除此 DAG 吗？',
@@ -2895,8 +2865,6 @@ const chinese = {
   'Enter a search term and press Enter or click Search':
     '输入搜索词并按回车或点击搜索',
   'Enter custom DAG-Run ID': '输入自定义 DAG-Run ID',
-  'Enter your license or trial key to activate Dagu features. You can obtain a key from':
-    '输入您的许可证或试用密钥以激活 Dagu 功能。您可以从以下位置获取密钥：',
   'Enter: Confirm': 'Enter: 确认',
   'Enter: select': 'Enter: 选择',
   entries: '条目',
@@ -2929,8 +2897,6 @@ const chinese = {
   'Execution history was not found.': '未找到执行历史。',
   'Execution:': '执行:',
   Executions: '执行',
-  'Existing keys remain active, but new key creation is blocked until extra keys are revoked or a license is configured.':
-    '现有密钥保持有效，但在撤销额外密钥或配置许可证之前，新密钥的创建将被阻止。',
   'Existing open incidents still resolve when the DAG recovers.':
     '当 DAG 恢复时，现有的未解决事件仍会解决。',
   'exit codes:': '退出代码:',
@@ -3053,8 +3019,6 @@ const chinese = {
   'in:': '输入:',
   Inactive: '未激活',
   'Incident Connections': '事件连接',
-  'Incident connections and routing require an active Dagu license or trial. Visit the':
-    '事件连接和路由需要有效的 Dagu 许可证或试用版。请访问',
   'Incident Routing': '事件路由',
   'Incident routing mode': '事件路由模式',
   Incidents: '事件',
@@ -3098,11 +3062,6 @@ const chinese = {
   'Last Used': '上次使用',
   'Latest Run': '最新运行',
   'Latest status': '最新状态',
-  License: '许可证',
-  'License Error': '许可证错误',
-  'License key': '许可证密钥',
-  'license or trial': '许可证或试用',
-  'License Required': '需要许可证',
   lines: '行',
   'Linking to this DAG': '链接到此 DAG',
   List: '列表',
@@ -3394,7 +3353,6 @@ const chinese = {
   Page: '页',
   'Page 1': '第 1 页',
   'page to activate one.': '页面以激活。',
-  'page to activate your license.': '页面以激活您的许可证。',
   'Page View': '页面视图',
   'Parameter editing and custom run IDs are disabled.':
     '参数编辑和自定义运行 ID 已禁用。',
@@ -3511,8 +3469,6 @@ const chinese = {
   'Remove DAGRun from queue': '从队列中移除 DAGRun',
   'Remove incident connection': '移除事件连接',
   'Remove missing items from sync tracking': '从同步跟踪中移除缺失项',
-  'Remove the license from this machine and return to community mode.':
-    '从此机器移除许可证并返回社区模式。',
   'Remove this DAG override and inherit workspace or Global notification rules?':
     '移除此 DAG 覆盖并继承工作区或全局通知规则？',
   Rename: '重命名',
@@ -3856,14 +3812,10 @@ const chinese = {
   'This DAG override replaces workspace and Global rules for future runs. Send test verifies delivery now.':
     '此 DAG 覆盖将替换未来运行的工作区和全局规则。发送测试以立即验证投递。',
   'This DAG uses': '此 DAG 使用',
-  'This feature requires an active Dagu license or trial. Visit the':
-    '此功能需要有效的 Dagu 许可证或试用版。请访问',
   'This file can’t be rendered inline. Download it to inspect the contents.':
     '此文件无法内联渲染。请下载以查看内容。',
   'This is a Slack Incoming Webhook URL. Select Slack as the provider.':
     '这是一个 Slack Incoming Webhook URL。请选择 Slack 作为提供商。',
-  'This license is configured via an environment variable (':
-    '此许可证通过环境变量配置 (',
   'This month': '本月',
   'This permanently removes run records, logs, artifacts, and related run data.':
     '这将永久删除运行记录、日志、工件及相关运行数据。',
@@ -3880,8 +3832,6 @@ const chinese = {
   'this Wiki page': '此Wiki页面',
   'This Wiki page has been modified externally, possibly by another process or user.':
     '此 Wiki 页面已被外部修改，可能是由其他进程或用户造成的。',
-  'This will deactivate the license on this machine and return to community mode. Licensed features (audit, RBAC, SSO) will be disabled immediately.':
-    '这将停用此机器上的许可证并返回社区模式。许可功能（审计、RBAC、SSO）将立即被禁用。',
   'This will re-execute': '这将重新执行',
   'This will remove': '这将删除',
   'This workspace': '此工作区',
@@ -3895,7 +3845,6 @@ const chinese = {
   'to a new path.': '到新路径。',
   'to avoid disruption': '以避免中断',
   'to expose selected request headers as': '继承。将选定的请求头暴露为',
-  'to keep licensed features.': '以保留授权功能。',
   'to navigate DAGs': '以导航 DAG',
   'to navigate histories': '以导航历史记录',
   'to navigate runs': '以导航运行',
@@ -3975,8 +3924,6 @@ const chinese = {
   'View DAG': '查看 DAG',
   'View DAG Definition': '查看 DAG 定义',
   'View diff': '查看差异',
-  'View license status and activate a Dagu license or trial key.':
-    '查看许可证状态并激活 Dagu 许可证或试用密钥。',
   'View mode': '查看模式',
   'View Raw': '查看原始数据',
   'View release': '查看发布',
@@ -4290,8 +4237,6 @@ const chinese = {
   'Update available: v{current} → {latest} {releaseLink} · Run {command} to update':
     '有可用更新：v{current} → {latest} {releaseLink} · 运行 {command} 进行更新',
   'Use {up} {down} to navigate DAGs': '使用 {up} {down} 浏览 DAG',
-  'User management features (create, edit, delete) require a {licenseLink}. Password reset is available for all admins.':
-    '用户管理功能（创建、编辑、删除）需要{licenseLink}。所有管理员均可重置密码。',
   'Value is unavailable in this context': '该值在此上下文中不可用',
   Viewer: '查看者',
   'View artifacts for {name} {runId}': '查看 {name} {runId} 的制品',
@@ -4359,14 +4304,7 @@ const chinese = {
   'Write permission required': '需要写入权限',
   'Push disabled in read-only mode': '只读模式下已禁用推送',
   'Publish {count} selected': '发布选中的 {count} 项',
-  'Your Dagu {license} has expired. Features will be disabled on {date}. Please {action}.':
-    '您的 Dagu {license}已过期。功能将于 {date} 停用。请{action}。',
-  'Your Dagu {license} {expiry}! Please {action} to keep licensed features.':
-    '您的 Dagu {license}{expiry}！请{action}以继续使用许可功能。',
-  'Your Dagu {license} {expiry}. Please {action}.':
-    '您的 Dagu {license}{expiry}。请{action}。',
   trial: '试用版',
-  license: '许可证',
   upgrade: '升级',
   renew: '续订',
   'upgrade now': '立即升级',
@@ -4374,10 +4312,6 @@ const chinese = {
   'upgrade to avoid disruption': '升级以避免服务中断',
   'renew to avoid disruption': '续订以避免服务中断',
   soon: '不久后',
-  'This license is active on more machines than allowed. Deactivate extra machines or contact your administrator.':
-    '此许可证的激活设备数超过限制。请停用多余设备或联系管理员。',
-  'There is an issue with your license. Contact your administrator.':
-    '许可证存在问题。请联系管理员。',
   'Open {dag} →': '打开 {dag} →',
   'Wiki pages under {folder} or containing a {link} wikilink appear here.':
     '{folder}下或包含 {link} Wiki 链接的页面会显示在此处。',
@@ -4394,8 +4328,6 @@ const chinese = {
   'Page {current} of {total}': '第 {current} 页，共 {total} 页',
   'Discard local changes to {item}? This cannot be undone.':
     '放弃对{item}的本地更改？此操作无法撤销。',
-  'Enter your license or trial key to activate Dagu features. You can obtain a key from {console}.':
-    '输入许可证或试用密钥以激活 Dagu 功能。可从 {console} 获取密钥。',
   'from {scope}': '来自{scope}',
   'send to {channel}': '发送到{channel}',
   'Searching {type}...': '正在搜索{type}...',
@@ -4499,6 +4431,23 @@ const chinese = {
   'Revoke Profile Token': '撤销配置文件令牌',
   'Applications using this token will immediately lose access.':
     '使用此令牌的应用将立即失去访问权限。',
+  'Approval saved; resume failed.': '审批已保存；恢复失败。',
+  'All artifact files are displayed.': '已显示所有产物文件。',
+  'All time': '全部时间',
+  'Client secret': '客户端密钥',
+  'Failed to delete channel': '删除通道失败',
+  'Failed to save channel': '保存通道失败',
+  'Headers': '请求头',
+  'Loading more artifacts...': '正在加载更多产物...',
+  'Missing channel': '通道缺失',
+  'No DAG-runs in the selected time range produced artifact files. Adjust the date range or filters.':
+    '所选时间范围内没有 DAG 运行生成产物文件。请调整日期范围或筛选条件。',
+  'No artifacts found': '未找到产物',
+  'Refresh token': '刷新令牌',
+  'Step': '步骤',
+  'Valid with warnings': '有效（含警告）',
+  'Warnings': '警告',
+  '· selective list, use the run to view all files': '· 仅列出部分文件，请从运行查看全部文件',
 } as const satisfies Record<StaticMessage, string>;
 
 const japanese = {
@@ -4691,7 +4640,6 @@ const japanese = {
   Action: 'アクション',
   Actions: 'アクション',
   Activate: '有効化',
-  'Activate License Key': 'ライセンスキーを有効化',
   'Activating...': '有効化中...',
   active: 'アクティブ',
   Active: 'アクティブ',
@@ -4901,7 +4849,6 @@ const japanese = {
   Connections: '接続',
   'Connections are configured once, then selected by Global, workspace, or DAG incident routing.':
     '接続は一度設定され、その後グローバル、ワークスペース、またはDAGインシデントルーティングによって選択されます。',
-  'console.dagu.sh': 'console.dagu.sh',
   'Continue scanning': 'スキャンを続行',
   'Coordinator Service': 'コーディネーターサービス',
   Copied: 'コピーしました',
@@ -4942,7 +4889,6 @@ const japanese = {
   Ctrl: 'Ctrl',
   Current: '現在',
   'Current item': '現在の項目',
-  'Current License': '現在のライセンス',
   'Current owner:': '現在の所有者:',
   'Current time': '現在時刻',
   Custom: 'カスタム',
@@ -4989,7 +4935,6 @@ const japanese = {
   Date: '日付',
   'Date preset': '日付プリセット',
   'Date range mode': '日付範囲モード',
-  'Deactivate License': 'ライセンスを無効化',
   'Deactivating...': '無効化中...',
   Default: 'デフォルト',
   'Default for every DAG unless a workspace or DAG is configured.':
@@ -5065,7 +5010,6 @@ const japanese = {
   'Discard Changes': '変更を破棄',
   'Discard local changes to': 'のローカル変更を破棄します',
   'Disk Usage': 'ディスク使用量',
-  'Dismiss license expiry notification': 'ライセンス期限切れ通知を閉じる',
   'Dismiss update notification': '更新通知を閉じる',
   'Distributed Workers': '分散型ワーカー',
   'Do you really want to delete this DAG?': '本当にこの DAG を削除しますか？',
@@ -5132,8 +5076,6 @@ const japanese = {
   'Enter a search term and press Enter or click Search':
     '検索語を入力し、Enter キーを押すか、検索をクリックしてください',
   'Enter custom DAG-Run ID': 'カスタム DAG-Run ID を入力',
-  'Enter your license or trial key to activate Dagu features. You can obtain a key from':
-    'Dagu の機能を有効にするには、ライセンスキーまたはトライアルキーを入力してください。キーは以下から取得できます：',
   'Enter: Confirm': 'Enter: 確認',
   'Enter: select': 'Enter: 選択',
   entries: 'エントリ',
@@ -5167,8 +5109,6 @@ const japanese = {
   'Execution history was not found.': '実行履歴が見つかりませんでした。',
   'Execution:': '実行:',
   Executions: '実行',
-  'Existing keys remain active, but new key creation is blocked until extra keys are revoked or a license is configured.':
-    '既存のキーは有効のままですが、追加のキーが失効するかライセンスが設定されるまで、新しいキーの作成はブロックされます。',
   'Existing open incidents still resolve when the DAG recovers.':
     'DAG が回復すると、既存の未解決インシデントも解決されます。',
   'exit codes:': '終了コード:',
@@ -5293,8 +5233,6 @@ const japanese = {
   'in:': '入力:',
   Inactive: '無効',
   'Incident Connections': 'インシデント接続',
-  'Incident connections and routing require an active Dagu license or trial. Visit the':
-    'インシデントの接続とルーティングには、有効な Dagu ライセンスまたはトライアルが必要です。',
   'Incident Routing': 'インシデントルーティング',
   'Incident routing mode': 'インシデントルーティングモード',
   Incidents: 'インシデント',
@@ -5339,11 +5277,6 @@ const japanese = {
   'Last Used': '最終使用',
   'Latest Run': '最新の Run',
   'Latest status': '最新ステータス',
-  License: 'ライセンス',
-  'License Error': 'ライセンスエラー',
-  'License key': 'ライセンスキー',
-  'license or trial': 'ライセンスまたはトライアル',
-  'License Required': 'ライセンスが必要です',
   lines: '行',
   'Linking to this DAG': 'この DAG へのリンク',
   List: 'リスト',
@@ -5655,7 +5588,6 @@ const japanese = {
   Page: 'ページ',
   'Page 1': '1 ページ目',
   'page to activate one.': 'ページでアクティベートしてください。',
-  'page to activate your license.': 'ページでライセンスを有効化してください。',
   'Page View': 'ページビュー',
   'Parameter editing and custom run IDs are disabled.':
     'パラメータの編集とカスタム実行 ID は無効になっています。',
@@ -5773,8 +5705,6 @@ const japanese = {
   'Remove incident connection': 'インシデント接続を削除',
   'Remove missing items from sync tracking':
     '同期トラッキングから欠落項目を削除',
-  'Remove the license from this machine and return to community mode.':
-    'このマシンからライセンスを削除し、コミュニティモードに戻ります。',
   'Remove this DAG override and inherit workspace or Global notification rules?':
     'この DAG のオーバーライドを削除し、ワークスペースまたはグローバルの通知ルールを継承しますか？',
   Rename: '名前の変更',
@@ -6134,14 +6064,10 @@ const japanese = {
   'This DAG override replaces workspace and Global rules for future runs. Send test verifies delivery now.':
     'この DAG オーバーライドは、今後の実行でワークスペースおよびグローバルルールを置き換えます。テスト送信で現在配信を確認します。',
   'This DAG uses': 'この DAG は',
-  'This feature requires an active Dagu license or trial. Visit the':
-    'この機能には有効な Dagu ライセンスまたはトライアルが必要です。',
   'This file can’t be rendered inline. Download it to inspect the contents.':
     'このファイルはインラインレンダリングできません。内容を確認するにはダウンロードしてください。',
   'This is a Slack Incoming Webhook URL. Select Slack as the provider.':
     'これは Slack Incoming Webhook URL です。プロバイダーとして Slack を選択してください。',
-  'This license is configured via an environment variable (':
-    'このライセンスは環境変数 (',
   'This month': '今月',
   'This permanently removes run records, logs, artifacts, and related run data.':
     'これにより、実行記録、ログ、成果物、および関連する実行データが恒久的に削除されます。',
@@ -6158,8 +6084,6 @@ const japanese = {
   'this Wiki page': 'このWikiページ',
   'This Wiki page has been modified externally, possibly by another process or user.':
     'この Wiki ページは外部で変更されました。他のプロセスまたはユーザーによる可能性があります。',
-  'This will deactivate the license on this machine and return to community mode. Licensed features (audit, RBAC, SSO) will be disabled immediately.':
-    'これにより、このマシンのライセンスが無効化され、コミュニティモードに戻ります。ライセンス機能（監査、RBAC、SSO）はすぐに無効になります。',
   'This will re-execute': 'これにより再実行されます',
   'This will remove': 'これにより削除されます',
   'This workspace': 'このワークスペース',
@@ -6174,7 +6098,6 @@ const japanese = {
   'to avoid disruption': 'して、中断を避けてください',
   'to expose selected request headers as':
     'から継承できます。選択したリクエストヘッダーを',
-  'to keep licensed features.': 'して、ライセンス付き機能を維持してください。',
   'to navigate DAGs': 'で DAG をナビゲート',
   'to navigate histories': 'で履歴をナビゲート',
   'to navigate runs': 'で実行をナビゲート',
@@ -6257,8 +6180,6 @@ const japanese = {
   'View DAG': 'DAG の表示',
   'View DAG Definition': 'DAG 定義を表示',
   'View diff': '差分を表示',
-  'View license status and activate a Dagu license or trial key.':
-    'ライセンスのステータスを表示し、Dagu ライセンスまたはトライアルキーを有効化します。',
   'View mode': '表示モード',
   'View Raw': '生データを表示',
   'View release': 'リリースを表示',
@@ -6583,8 +6504,6 @@ const japanese = {
   'Update available: v{current} → {latest} {releaseLink} · Run {command} to update':
     '更新があります：v{current} → {latest} {releaseLink} · {command} を実行して更新',
   'Use {up} {down} to navigate DAGs': '{up} {down} で DAG 間を移動',
-  'User management features (create, edit, delete) require a {licenseLink}. Password reset is available for all admins.':
-    'ユーザー管理機能（作成・編集・削除）には{licenseLink}が必要です。すべての管理者がパスワードをリセットできます。',
   'Value is unavailable in this context':
     'このコンテキストでは値を利用できません',
   Viewer: '閲覧者',
@@ -6655,14 +6574,7 @@ const japanese = {
   'Write permission required': '書き込み権限が必要です',
   'Push disabled in read-only mode': '読み取り専用モードではプッシュできません',
   'Publish {count} selected': '選択した {count} 件を公開',
-  'Your Dagu {license} has expired. Features will be disabled on {date}. Please {action}.':
-    'Dagu の{license}は期限切れです。{date}に機能が無効になります。{action}してください。',
-  'Your Dagu {license} {expiry}! Please {action} to keep licensed features.':
-    'Dagu の{license}は{expiry}。ライセンス機能を継続するには{action}してください。',
-  'Your Dagu {license} {expiry}. Please {action}.':
-    'Dagu の{license}は{expiry}。{action}してください。',
   trial: 'トライアル',
-  license: 'ライセンス',
   upgrade: 'アップグレード',
   renew: '更新',
   'upgrade now': '今すぐアップグレード',
@@ -6670,10 +6582,6 @@ const japanese = {
   'upgrade to avoid disruption': '中断を避けるためにアップグレード',
   'renew to avoid disruption': '中断を避けるために更新',
   soon: 'まもなく',
-  'This license is active on more machines than allowed. Deactivate extra machines or contact your administrator.':
-    'このライセンスは上限を超えるマシンで有効です。余分なマシンを無効にするか、管理者に連絡してください。',
-  'There is an issue with your license. Contact your administrator.':
-    'ライセンスに問題があります。管理者に連絡してください。',
   'Open {dag} →': '{dag} を開く →',
   'Wiki pages under {folder} or containing a {link} wikilink appear here.':
     '{folder}以下、または {link} ウィキリンクを含む Wiki ページがここに表示されます。',
@@ -6691,8 +6599,6 @@ const japanese = {
   'Page {current} of {total}': '{total} ページ中 {current} ページ',
   'Discard local changes to {item}? This cannot be undone.':
     '{item}のローカル変更を破棄しますか？この操作は元に戻せません。',
-  'Enter your license or trial key to activate Dagu features. You can obtain a key from {console}.':
-    'ライセンスまたはトライアルキーを入力して Dagu の機能を有効にします。キーは {console} から取得できます。',
   'from {scope}': '{scope}から',
   'send to {channel}': '{channel}に送信',
   'Searching {type}...': '{type}を検索中...',
@@ -6801,6 +6707,23 @@ const japanese = {
   'Revoke Profile Token': 'プロファイルトークンを失効',
   'Applications using this token will immediately lose access.':
     'このトークンを使っているアプリケーションは直ちにアクセスできなくなります。',
+  'Approval saved; resume failed.': '承認は保存されましたが、再開に失敗しました。',
+  'All artifact files are displayed.': 'すべての成果物ファイルを表示しています。',
+  'All time': '全期間',
+  'Client secret': 'クライアントシークレット',
+  'Failed to delete channel': 'チャネルの削除に失敗しました',
+  'Failed to save channel': 'チャネルの保存に失敗しました',
+  'Headers': 'ヘッダー',
+  'Loading more artifacts...': '成果物をさらに読み込み中...',
+  'Missing channel': 'チャネルなし',
+  'No DAG-runs in the selected time range produced artifact files. Adjust the date range or filters.':
+    '選択した時間範囲に成果物ファイルを生成したDAG実行はありません。時間範囲またはフィルターを調整してください。',
+  'No artifacts found': '成果物が見つかりません',
+  'Refresh token': 'リフレッシュトークン',
+  'Step': 'ステップ',
+  'Valid with warnings': '警告付きで有効',
+  'Warnings': '警告',
+  '· selective list, use the run to view all files': '· 一部のみ表示しています。すべてのファイルは実行から確認できます',
 } as const satisfies Record<StaticMessage, string>;
 
 export const staticMessages = {

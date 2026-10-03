@@ -25,7 +25,6 @@ const (
 	CollectionDAGState              = "dag_state"
 	CollectionDispatchTasks         = "dispatch_tasks"
 	CollectionIncidents             = "incidents"
-	CollectionLicense               = "license"
 	CollectionNotifications         = "notifications"
 	CollectionProfiles              = "profiles"
 	CollectionQueue                 = "queue"

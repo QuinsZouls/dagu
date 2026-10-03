@@ -38,7 +38,7 @@ const appBarValue = {
   workspaces: [],
 };
 
-function makeConfig(licenseOverrides: Partial<Config['license']> = {}): Config {
+function makeConfig(): Config {
   return {
     apiURL: '/api/v1',
     basePath: '/',
@@ -63,18 +63,6 @@ function makeConfig(licenseOverrides: Partial<Config['license']> = {}): Config {
     permissions: {
       writeDags: true,
       runDags: true,
-    },
-    license: {
-      valid: false,
-      plan: '',
-      expiry: '',
-      features: [],
-      gracePeriod: false,
-      graceEndsAt: '',
-      community: true,
-      source: '',
-      warningCode: '',
-      ...licenseOverrides,
     },
     paths: {
       dagsDir: '',
@@ -114,13 +102,7 @@ function makeAPIKey(id: string): APIKey {
   };
 }
 
-function renderPage({
-  license,
-  apiKeys,
-}: {
-  license?: Partial<Config['license']>;
-  apiKeys: APIKey[];
-}) {
+function renderPage({ apiKeys }: { apiKeys: APIKey[] }) {
   const fetchMock = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ apiKeys }),
@@ -128,7 +110,7 @@ function renderPage({
   vi.stubGlobal('fetch', fetchMock);
 
   render(
-    <ConfigContext.Provider value={makeConfig(license)}>
+    <ConfigContext.Provider value={makeConfig()}>
       <AppBarContext.Provider value={appBarValue}>
         <APIKeysPage />
       </AppBarContext.Provider>
@@ -148,34 +130,33 @@ describe('APIKeysPage', () => {
     localStorage.clear();
   });
 
-  it('warns and disables creation when a community install reaches 2 API keys', async () => {
+  it('allows creating keys beyond the old 2-key community cap', async () => {
     renderPage({
-      apiKeys: [makeAPIKey('1'), makeAPIKey('2')],
-    });
-
-    expect(
-      await screen.findByText(/Community installs can manage up to 2 API keys/i)
-    ).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: /create api key/i })
-    ).toBeDisabled();
-  });
-
-  it('does not warn licensed installs with more than 2 API keys', async () => {
-    renderPage({
-      license: {
-        valid: true,
-        plan: 'pro',
-        expiry: '2026-05-22T00:00:00Z',
-        features: ['audit', 'rbac'],
-        community: false,
-        source: 'file',
-      },
       apiKeys: [makeAPIKey('1'), makeAPIKey('2'), makeAPIKey('3')],
     });
 
     await waitFor(() => {
-      expect(screen.getAllByText('api-key-3')[0]).toBeVisible();
+      expect(screen.getAllByText('api-key-3').length).toBeGreaterThan(0);
+    });
+
+    expect(
+      screen.queryByText(/Community installs can manage up to 2 API keys/i)
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/a license is configured/i)
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /create api key/i })
+    ).toBeEnabled();
+  });
+
+  it('shows no warning when exactly 2 keys are loaded', async () => {
+    renderPage({
+      apiKeys: [makeAPIKey('1'), makeAPIKey('2')],
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('api-key-2').length).toBeGreaterThan(0);
     });
 
     expect(
@@ -184,23 +165,6 @@ describe('APIKeysPage', () => {
     expect(
       screen.getByRole('button', { name: /create api key/i })
     ).toBeEnabled();
-  });
-
-  it('warns when an inactive loaded license reaches 2 API keys', async () => {
-    renderPage({
-      license: {
-        valid: false,
-        gracePeriod: false,
-        community: false,
-        plan: 'pro',
-        source: 'file',
-      },
-      apiKeys: [makeAPIKey('1'), makeAPIKey('2')],
-    });
-
-    expect(
-      await screen.findByText(/Community installs can manage up to 2 API keys/i)
-    ).toBeVisible();
   });
 });
 

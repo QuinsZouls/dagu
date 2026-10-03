@@ -15,7 +15,6 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/cmn/logger/tag"
 	"github.com/dagucloud/dagu/v2/internal/dagsettings"
 	"github.com/dagucloud/dagu/v2/internal/incident"
-	"github.com/dagucloud/dagu/v2/internal/license"
 	"github.com/dagucloud/dagu/v2/internal/notification"
 	"github.com/dagucloud/dagu/v2/internal/persis"
 	"github.com/dagucloud/dagu/v2/internal/persis/store"
@@ -95,18 +94,6 @@ func NewNotificationStore(col persis.Collection, enc *crypto.Encryptor) (notific
 		return nil, err
 	}
 	return store.NewNotificationStore(col, enc)
-}
-
-func NewLicenseStore(ctx context.Context, col persis.Collection) license.ActivationStore {
-	// License data requires an owner-only collection directory.
-	if err := createCollectionDirs(col, "license store", 0o700, ""); err != nil {
-		logger.Warn(ctx, "Failed to create license store directory", tag.Error(err))
-	}
-	return store.NewLicenseStore(col)
-}
-
-func LicenseDir(cfg *config.Config) string {
-	return filepath.Join(cfg.Paths.DataDir, "license")
 }
 
 func NewUpgradeCheckStore(cfg *config.Config, col persis.Collection) (upgrade.CacheStore, error) {

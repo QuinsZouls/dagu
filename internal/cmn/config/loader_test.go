@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2611,44 +2612,78 @@ tunnel:
 	})
 }
 
-func TestLoad_LicenseCommunityFeatures(t *testing.T) {
+// TestLoad_LegacyLicenseKeysIgnored is the legacy-compat guard proving
+// decision D1 — NOT a live feature test: no license behaviour exists in this
+// fork, and a config file that still carries a legacy `license:` block,
+// together with the DAGU_LICENSE* environment variables, must Load() without
+// error and yield a Config with no license surface. Legacy keys are silently
+// ignored (no error, no warning, no shim).
+func TestLoad_LegacyLicenseKeysIgnored(t *testing.T) {
 	// Subtests use t.Setenv so the parent must not call t.Parallel.
+	legacyEnv := map[string]string{
+		"DAGU_LICENSE":                    "legacy-token",
+		"DAGU_LICENSE_KEY":                "legacy-key",
+		"DAGU_LICENSE_FILE":               "/tmp/legacy-license.key",
+		"DAGU_LICENSE_CLOUD_URL":          "https://console.example.com",
+		"DAGU_LICENSE_COMMUNITY_FEATURES": "rbac, sso",
+	}
 
-	t.Run("FromEnvCommaSeparated", func(t *testing.T) {
-		cfg := loadWithEnv(t, "# empty", map[string]string{
-			"DAGU_LICENSE_COMMUNITY_FEATURES": "rbac, sso",
-		})
-		assert.Equal(t, []string{"rbac", "sso"}, cfg.License.CommunityFeatures)
-	})
+	// loadLegacy writes yamlContent to a config file with all legacy env vars
+	// set and asserts explicitly that Load returns no error.
+	loadLegacy := func(t *testing.T, yamlContent string) *Config {
+		t.Helper()
+		for k, v := range legacyEnv {
+			t.Setenv(k, v)
+		}
+		configFile := filepath.Join(t.TempDir(), "config.yaml")
+		require.NoError(t, os.WriteFile(configFile, []byte(yamlContent), 0600))
 
-	t.Run("FromEnvTrimsSpacesAndSkipsEmptyParts", func(t *testing.T) {
-		cfg := loadWithEnv(t, "# empty", map[string]string{
-			"DAGU_LICENSE_COMMUNITY_FEATURES": " rbac ,, sso ,",
-		})
-		assert.Equal(t, []string{"rbac", "sso"}, cfg.License.CommunityFeatures)
-	})
+		cfg, err := NewConfigLoader(viper.New(),
+			WithAppHomeDir(t.TempDir()),
+			WithConfigFile(configFile),
+		).Load()
+		require.NoError(t, err,
+			"legacy license keys must be ignored without error")
+		return cfg
+	}
 
-	t.Run("FromYAMLList", func(t *testing.T) {
-		cfg := loadFromYAML(t, `
+	// assertNoLicenseSurface pins the "no licence behaviour" half of D1:
+	// neither config.Config nor config.Definition may expose a License field.
+	assertNoLicenseSurface := func(t *testing.T, cfg *Config) {
+		t.Helper()
+		_, cfgHasLicense := reflect.TypeOf(*cfg).FieldByName("License")
+		require.False(t, cfgHasLicense,
+			"config.Config must not have a License field")
+		_, defHasLicense := reflect.TypeOf(Definition{}).FieldByName("License")
+		require.False(t, defHasLicense,
+			"config.Definition must not have a License field")
+	}
+
+	t.Run("YAMLListForm", func(t *testing.T) {
+		cfg := loadLegacy(t, `
 license:
+  key: legacy-key
+  cloud_url: https://console.example.com
   community_features:
     - rbac
     - sso
 `)
-		assert.Equal(t, []string{"rbac", "sso"}, cfg.License.CommunityFeatures)
+		assertNoLicenseSurface(t, cfg)
 	})
 
-	t.Run("FromYAMLCommaSeparatedString", func(t *testing.T) {
-		cfg := loadFromYAML(t, `
+	t.Run("YAMLCommaStringForm", func(t *testing.T) {
+		cfg := loadLegacy(t, `
 license:
+  key: legacy-key
+  cloud_url: https://console.example.com
   community_features: "audit, rbac"
 `)
-		assert.Equal(t, []string{"audit", "rbac"}, cfg.License.CommunityFeatures)
+		assertNoLicenseSurface(t, cfg)
 	})
 
-	t.Run("NotSet", func(t *testing.T) {
-		cfg := loadFromYAML(t, "# empty")
-		assert.Empty(t, cfg.License.CommunityFeatures)
+	t.Run("EnvOnly", func(t *testing.T) {
+		cfg := loadLegacy(t, "# no license block")
+		assertNoLicenseSurface(t, cfg)
 	})
 }
 

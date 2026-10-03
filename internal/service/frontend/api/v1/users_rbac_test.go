@@ -4,7 +4,6 @@
 package api_test
 
 import (
-	"crypto/ed25519"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,28 +11,15 @@ import (
 
 	"github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
-	"github.com/dagucloud/dagu/v2/internal/license"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/require"
 )
 
-// communityFeaturesServer creates a builtin-auth test server whose license
-// manager runs in community mode with the given community features configured
-// (license.ManagerConfig.CommunityFeatures). The harness never calls
-// Manager.Start, so no license is ever discovered and the manager state stays
-// claims == nil, exactly like a real deployment without a license. Passing no
-// features reproduces the upstream default where every licensed feature is
-// disabled without a license.
-func communityFeaturesServer(t *testing.T, features ...string) test.Server {
+// rbacTestServer creates a builtin-auth test server with the stock harness
+// configuration and nothing else injected: user management, the last-active-
+// admin invariant and every role guard must hold on their own.
+func rbacTestServer(t *testing.T) test.Server {
 	t.Helper()
-
-	pub, _, err := ed25519.GenerateKey(nil)
-	require.NoError(t, err)
-
-	manager := license.NewManager(license.ManagerConfig{
-		CommunityFeatures: features,
-	}, pub, nil, nil)
 
 	return test.SetupServer(t,
 		test.WithConfigMutator(func(cfg *config.Config) {
@@ -41,7 +27,6 @@ func communityFeaturesServer(t *testing.T, features ...string) test.Server {
 			cfg.Server.Auth.Builtin.Token.Secret = "community-multi-user-jwt-secret"
 			cfg.Server.Auth.Builtin.Token.TTL = time.Hour
 		}),
-		test.WithServerOptions(frontend.WithLicenseManager(manager)),
 	)
 }
 
@@ -60,15 +45,14 @@ func communitySetupAdmin(t *testing.T, server test.Server) string {
 	return result.Token
 }
 
-// TestCommunityMultiUser_RBACEnabled proves the end-to-end community
-// multi-user flow when rbac is opted in via license.community_features: the
-// admin created by first-run setup can create, inspect, modify, disable and
-// delete users — the exact calls that returned 403 "User management requires
-// a Dagu Pro license" before the community features landed.
-func TestCommunityMultiUser_RBACEnabled(t *testing.T) {
+// TestUserManagement_MultiUserFlow proves the end-to-end multi-user
+// management flow: the admin created by first-run setup can create, inspect,
+// modify, disable and delete users — unconditionally, with no feature gate
+// anywhere in the path.
+func TestUserManagement_MultiUserFlow(t *testing.T) {
 	t.Parallel()
 
-	server := communityFeaturesServer(t, license.FeatureRBAC)
+	server := rbacTestServer(t)
 	adminToken := communitySetupAdmin(t, server)
 
 	// a+b. Create alice (developer): this was the 403-before case — the core
@@ -127,7 +111,7 @@ func TestCommunityMultiUser_RBACEnabled(t *testing.T) {
 	// refused while the account is disabled. The GetUserFromToken claim
 	// (an already-issued token stops authenticating) is pinned separately
 	// by the "live-session invalidation is pinned" vector in
-	// TestCommunityMultiUser_LastAdminGuards (/auth/me with an old token).
+	// TestLastActiveAdminGuards (/auth/me with an old token).
 	isDisabled := true
 	server.Client().Patch("/api/v1/users/"+created.User.Id, api.UpdateUserRequest{
 		IsDisabled: &isDisabled,
@@ -162,101 +146,6 @@ func TestCommunityMultiUser_RBACEnabled(t *testing.T) {
 	require.Len(t, list.Users, 1)
 	require.Equal(t, "admin", list.Users[0].Username)
 
-	// i. License status stays honest: community mode with rbac projected from
-	// the community features, no license validity claimed.
-	statusResp := server.Client().Get("/api/v1/license/status").
-		WithBearerToken(adminToken).
-		ExpectStatus(http.StatusOK).Send(t)
-
-	var status api.LicenseStatusResponse
-	statusResp.Unmarshal(t, &status)
-	require.True(t, status.Community)
-	require.False(t, status.Valid)
-	require.Contains(t, status.Features, license.FeatureRBAC)
-}
-
-// TestCommunityMultiUser_NoFeatures proves the upstream default is preserved
-// byte-for-byte when a license manager is configured without any community
-// features: user creation is refused with the same 403 envelope as before the
-// community features landed.
-func TestCommunityMultiUser_NoFeatures(t *testing.T) {
-	t.Parallel()
-
-	server := communityFeaturesServer(t) // no CommunityFeatures ⇒ upstream default
-	adminToken := communitySetupAdmin(t, server)
-
-	resp := server.Client().Post("/api/v1/users", api.CreateUserRequest{
-		Username: "alice",
-		Password: "alicepass123",
-		Role:     api.UserRoleDeveloper,
-	}).WithBearerToken(adminToken).ExpectStatus(http.StatusForbidden).Send(t)
-
-	var errResp api.Error
-	resp.Unmarshal(t, &errResp)
-	require.Equal(t, api.ErrorCodeForbidden, errResp.Code)
-	require.Equal(t, "User management requires a Dagu Pro license", errResp.Message)
-
-	// The manager reports honest community status with no projected features.
-	statusResp := server.Client().Get("/api/v1/license/status").
-		WithBearerToken(adminToken).
-		ExpectStatus(http.StatusOK).Send(t)
-
-	var status api.LicenseStatusResponse
-	statusResp.Unmarshal(t, &status)
-	require.True(t, status.Community)
-	require.False(t, status.Valid)
-	require.Empty(t, status.Features)
-}
-
-// TestCommunityMultiUser_SSOFeatureDoesNotEnableUserCRUD proves per-feature
-// granularity: opting into sso does NOT unlock the rbac-gated user CRUD calls.
-func TestCommunityMultiUser_SSOFeatureDoesNotEnableUserCRUD(t *testing.T) {
-	t.Parallel()
-
-	server := communityFeaturesServer(t, license.FeatureSSO)
-	adminToken := communitySetupAdmin(t, server)
-
-	// The sso feature really is enabled in community mode...
-	statusResp := server.Client().Get("/api/v1/license/status").
-		WithBearerToken(adminToken).
-		ExpectStatus(http.StatusOK).Send(t)
-
-	var status api.LicenseStatusResponse
-	statusResp.Unmarshal(t, &status)
-	require.True(t, status.Community)
-	require.Contains(t, status.Features, license.FeatureSSO)
-
-	// ...the non-rbac-gated list endpoint still works...
-	usersResp := server.Client().Get("/api/v1/users").
-		WithBearerToken(adminToken).
-		ExpectStatus(http.StatusOK).Send(t)
-
-	var list api.UsersListResponse
-	usersResp.Unmarshal(t, &list)
-	require.Len(t, list.Users, 1)
-	require.Equal(t, "admin", list.Users[0].Username)
-
-	// ...but creating a user requires an explicit rbac opt-in...
-	createResp := server.Client().Post("/api/v1/users", api.CreateUserRequest{
-		Username: "alice",
-		Password: "alicepass123",
-		Role:     api.UserRoleDeveloper,
-	}).WithBearerToken(adminToken).ExpectStatus(http.StatusForbidden).Send(t)
-
-	var errResp api.Error
-	createResp.Unmarshal(t, &errResp)
-	require.Equal(t, api.ErrorCodeForbidden, errResp.Code)
-	require.Equal(t, "User management requires a Dagu Pro license", errResp.Message)
-
-	// ...and so does every other rbac-gated mutation of an existing user.
-	viewerRole := api.UserRoleViewer
-	patchResp := server.Client().Patch("/api/v1/users/"+list.Users[0].Id, api.UpdateUserRequest{
-		Role: &viewerRole,
-	}).WithBearerToken(adminToken).ExpectStatus(http.StatusForbidden).Send(t)
-
-	patchResp.Unmarshal(t, &errResp)
-	require.Equal(t, api.ErrorCodeForbidden, errResp.Code)
-	require.Equal(t, "User management requires a Dagu Pro license", errResp.Message)
 }
 
 // TestCommunityMultiUser_LastAdminGuards proves the single M3 invariant:
@@ -278,10 +167,10 @@ func TestCommunityMultiUser_SSOFeatureDoesNotEnableUserCRUD(t *testing.T) {
 //     admin is refused with the last-active-admin message
 //   - a compound {role: viewer, username: <taken>} patch on the sole active
 //     admin returns 409 (username collision is checked before the invariant)
-func TestCommunityMultiUser_LastAdminGuards(t *testing.T) {
+func TestLastActiveAdminGuards(t *testing.T) {
 	t.Parallel()
 
-	server := communityFeaturesServer(t, license.FeatureRBAC)
+	server := rbacTestServer(t)
 	adminToken := communitySetupAdmin(t, server)
 
 	listUsers := func(token string) api.UsersListResponse {

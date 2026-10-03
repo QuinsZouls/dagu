@@ -20,8 +20,6 @@ import (
 	"github.com/dagucloud/dagu/v2/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/ir"
-	"github.com/dagucloud/dagu/v2/internal/license"
-	"github.com/dagucloud/dagu/v2/internal/service/frontend"
 	apiimpl "github.com/dagucloud/dagu/v2/internal/service/frontend/api/v1"
 	"github.com/dagucloud/dagu/v2/internal/test"
 	"github.com/stretchr/testify/assert"
@@ -85,14 +83,8 @@ func TestExtractWebhookToken(t *testing.T) {
 	}
 }
 
-// defaultTestLicenseManager returns a license manager with all Pro features
-// enabled, for use in tests that need licensed endpoints (user management, audit, etc.).
-func defaultTestLicenseManager() *license.Manager {
-	return license.NewTestManager(license.FeatureRBAC, license.FeatureAudit)
-}
-
-// setupWebhookTestServer creates a test server with builtin auth and a default
-// Pro license. Extra config mutators are applied after the base auth config.
+// setupWebhookTestServer creates a test server with builtin auth.
+// Extra config mutators are applied after the base auth config.
 func setupWebhookTestServer(t *testing.T, extraMutators ...func(*config.Config)) test.Server {
 	t.Helper()
 
@@ -105,7 +97,6 @@ func setupWebhookTestServer(t *testing.T, extraMutators ...func(*config.Config))
 				m(cfg)
 			}
 		}),
-		test.WithServerOptions(frontend.WithLicenseManager(defaultTestLicenseManager())),
 	)
 
 	// Create admin via setup endpoint

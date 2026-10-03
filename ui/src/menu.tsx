@@ -1091,7 +1091,6 @@ export const mainListItems = React.forwardRef<
                 '/api-keys',
                 '/remote-nodes',
                 '/terminal',
-                '/license',
                 '/administration',
               ]}
               to="/administration"
@@ -1129,7 +1128,7 @@ export const mainListItems = React.forwardRef<
                 groupKey="administration-infrastructure"
                 label={t('navigation.infrastructure')}
                 isOpen={isOpen}
-                basePath={['/remote-nodes', '/terminal', '/license']}
+                basePath={['/remote-nodes', '/terminal']}
                 customColor={customColor}
                 persistExpanded={false}
               >
@@ -1149,13 +1148,6 @@ export const mainListItems = React.forwardRef<
                     customColor={customColor}
                   />
                 )}
-                <NavItem
-                  to="/license"
-                  text={t('navigation.license')}
-                  isOpen={isOpen}
-                  onClick={onNavItemClick}
-                  customColor={customColor}
-                />
               </NavGroup>
             </NavGroup>
           )}
