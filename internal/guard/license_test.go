@@ -47,12 +47,33 @@ var scanTokens = []string{
 	"/license/deactivate",
 	"Pro license",
 	"communityAPIKeyLimit",
+	// Added by the third-sync follow-up (T13/D12). The 2026-10-13 upstream
+	// merge reintroduced the Dagu Cloud connector under brand-new symbols that
+	// this scan did not know: it stayed green while the tree no longer
+	// compiled, and only the compiler caught them (plan C4). `cloudreport`
+	// also covers the `internal/cloudreport` import path.
+	"LicenseManager",
+	"CloudCredentials",
+	"cloudreport",
+	"WithCloudReport",
+	// The removed CLI surface. The pre-merge fork's generated llms.txt still
+	// advertised this line even though cli.md was already clean (plan C5), and
+	// no token matched it — so the new `.txt` scope in scanExtensions below
+	// could not have caught it. This token is also the one the post-sync docs
+	// ladder greps for (`dagu license|DAGU_LICENSE|License Required`).
+	"dagu license",
 }
 
 // scanExtensions is the file scope from ruling R5.
 var scanExtensions = map[string]bool{
 	".go": true, ".ts": true, ".tsx": true, ".yaml": true, ".yml": true,
 	".json": true, ".md": true, ".sh": true, ".mjs": true,
+	// Added by the third-sync follow-up (T13/D12): HTML templates and plain
+	// text were structurally out of scope, so `internal/service/frontend/
+	// templates/base.gohtml` (hand-cleaned by this merge) and the regenerated
+	// `llms.txt` (plan C5) could never trip this leg even while they advertised
+	// license surface.
+	".html": true, ".gohtml": true, ".tmpl": true, ".txt": true,
 }
 
 // skipDirNames excludes version control and build-output directories (R5:
@@ -116,6 +137,11 @@ var guardExceptions = []guardException{
 		File:   "FORK.md",
 		Token:  "Pro license",
 		Reason: "removal record names the removed feature by its real name; for humans, not gating",
+	},
+	{
+		File:   "FORK.md",
+		Token:  "dagu license",
+		Reason: "removal record names the removed CLI subcommand verbatim, and states the post-sync docs-ladder grep that must keep finding it (PLAN §407 / plan C5); for humans, not gating",
 	},
 }
 
