@@ -11,10 +11,12 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/dagucloud/dagu/v2/internal/browserhost"
+	"github.com/dagucloud/dagu/v2/internal/browserhost/certproxy"
 	cmnconfig "github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/cmn/fileutil"
 	"github.com/dagucloud/dagu/v2/internal/cmn/masking"
@@ -52,6 +54,8 @@ var statementSchema = json.RawMessage(`{"type":"object","additionalProperties":f
 // run executes one step attempt: a fresh browser session, or a session
 // resumed after a person answered an ask operation.
 type run struct {
+	// operator performs the operations on the step's browser.
+	operator
 	exec      *browserExecutor
 	cfg       config
 	dagName   string
@@ -62,14 +66,11 @@ type run struct {
 	browser   string
 	secrets   map[string]string
 	masker    *masking.Masker
-	bridge    *modelBridge
 	cache     *replayCache
 	artifacts *agentstep.ArtifactStore
 	timeline  *agentstep.Timeline
-	eng       engine
 	record    browserhost.Record
 	profile   *profileLease
-	variables map[string]string
 	// answers holds the values people gave to ask operations.
 	answers map[string]string
 	outputs map[string]any
@@ -79,6 +80,9 @@ type run struct {
 	// blockedUncounted is set once blocked requests can no longer be
 	// counted.
 	blockedUncounted bool
+	// certificateFailures holds, by host, the last trouble with a client
+	// certificate the proxy reported in this attempt.
+	certificateFailures map[string]string
 	// downloadWindow is the longest timeout of the acts and gotos run so
 	// far, which can start downloads; zero until one runs.
 	downloadWindow time.Duration
@@ -96,6 +100,7 @@ func newRun(ctx context.Context, e *browserExecutor) (*run, error) {
 		secrets = env.Scope.AllSecrets()
 		artifactsDir, _ = env.Scope.Get(runenv.EnvKeyDAGRunArtifactsDir)
 	}
+	secrets = withCertificatePassphrases(secrets, e.cfg.Browser.ClientCertificates)
 	if err := agentstep.CheckSecrets(executorType, e.cfg.operationTexts(), secrets); err != nil {
 		return nil, err
 	}
@@ -113,7 +118,18 @@ func newRun(ctx context.Context, e *browserExecutor) (*run, error) {
 		return nil, err
 	}
 	browserDir := filepath.Join(dataDir, browserhost.DataDirName)
+	variables := maps.Clone(e.cfg.Variables)
+	if variables == nil {
+		variables = map[string]string{}
+	}
+	artifacts := agentstep.NewArtifactStore(artifactsDir, artifactsSubdir, stepKey)
 	r := &run{
+		operator: operator{
+			bridge:         bridge,
+			variables:      variables,
+			allowedDomains: e.cfg.Browser.AllowedDomains,
+			shots:          artifacts,
+		},
 		exec:      e,
 		cfg:       e.cfg,
 		dagName:   dagName,
@@ -124,20 +140,27 @@ func newRun(ctx context.Context, e *browserExecutor) (*run, error) {
 		browser:   browserDir,
 		secrets:   secrets,
 		masker:    masker,
-		bridge:    bridge,
-		artifacts: agentstep.NewArtifactStore(artifactsDir, artifactsSubdir, stepKey),
-		variables: maps.Clone(e.cfg.Variables),
+		artifacts: artifacts,
 		answers:   map[string]string{},
 		outputs:   map[string]any{},
 		blocked:   map[string]int{},
-	}
-	if r.variables == nil {
-		r.variables = map[string]string{}
+
+		certificateFailures: map[string]string{},
 	}
 	if e.cfg.cacheEnabled() {
 		r.cache = openReplayCache(browserDir, dagName, stepKey)
+		r.recorder = stepRecorder{cache: r.cache}
 	}
 	r.timeline = &agentstep.Timeline{Log: e.stderr, Masker: masker, Total: len(e.cfg.Do), Update: e.updateSession, Provider: providerName}
+	r.warn = func(index int, message string) {
+		_, _ = fmt.Fprintf(r.timeline.Log, "warning: %s %s\n", r.timeline.Position(index), message)
+	}
+	r.certificateEvent = func(index int, event certproxy.Event) {
+		logCertificateEvent(r.timeline, index, event)
+		if certificateTrouble(event) {
+			r.certificateFailures[event.Host] = describeCertificateEvent(event)
+		}
+	}
 	return r, nil
 }
 
@@ -146,14 +169,14 @@ func (r *run) execute(ctx context.Context) error {
 		return errors.New("browser: ask operations are not supported on Windows, where the browser cannot outlive the step process")
 	}
 	sweepCtx, cancel := context.WithTimeout(ctx, sweepBudget)
-	_ = browserhost.Sweep(sweepCtx, r.store, time.Now(), nil)
+	_ = browserhost.SweepAll(sweepCtx, r.browser, time.Now(), nil)
 	cancel()
 
 	start, err := r.startSession(ctx)
 	r.reportDialogs(-1)
 	r.reportBlocked(-1)
 	if err == nil {
-		err = r.checkPage(ctx)
+		err = r.checkPage(ctx, -1)
 	}
 	if err != nil {
 		return r.fail(ctx, -1, "", err)
@@ -180,13 +203,16 @@ func (r *run) execute(ctx context.Context) error {
 			}
 			return r.waitForInput(ctx, i, *op.Ask)
 		}
-		err := r.runOperation(ctx, i, op)
+		result, err := r.runOperation(ctx, i, op)
+		if err == nil {
+			r.reportResult(ctx, result)
+		}
 		r.reportDialogs(i)
 		r.reportBlocked(i)
 		if err != nil {
 			return r.fail(ctx, i, op.kind(), err)
 		}
-		if err := r.checkPage(ctx); err != nil {
+		if err := r.checkPage(ctx, i); err != nil {
 			return r.fail(ctx, i, op.kind(), err)
 		}
 		if op.Act != nil || op.Goto != "" {
@@ -235,22 +261,6 @@ func (r *run) reportBlocked(index int) {
 		r.blocked[host] += count
 	}
 	logBlocked(r.timeline, index, describeBlocked(blocked))
-}
-
-// checkPage fails when the page has left browser.allowed_domains, which a
-// redirect or an act can cause even when every goto target was allowed.
-func (r *run) checkPage(ctx context.Context) error {
-	if len(r.cfg.Browser.AllowedDomains) == 0 {
-		return nil
-	}
-	current, err := r.eng.CurrentURL(ctx)
-	if err != nil {
-		return err
-	}
-	if err := checkAllowedDomain(current, r.cfg.Browser.AllowedDomains); err != nil {
-		return fmt.Errorf("the page navigated away: %w", err)
-	}
-	return nil
 }
 
 // settleDownloads waits for downloads that are still running and records the
@@ -327,29 +337,32 @@ func (r *run) startSession(ctx context.Context) (int, error) {
 	r.eng = eng
 	handle := eng.Handle()
 	r.record = browserhost.Record{
-		ID:              recordID,
-		DAGName:         r.dagName,
-		DAGRunID:        r.dagRunID,
-		StepName:        r.stepName,
-		Generation:      generation,
-		State:           browserhost.StateRunning,
-		CDPURL:          handle.CDPURL,
-		ExtensionID:     handle.ExtensionID,
-		ExtensionDir:    handle.ExtensionDir,
-		UserDataDir:     opts.UserDataDir,
-		OwnsUserDataDir: r.profile == nil,
-		Profile:         r.cfg.Browser.Profile,
-		DownloadsDir:    opts.DownloadsDir,
-		BrowserPID:      handle.BrowserPID,
+		ID:               recordID,
+		DAGName:          r.dagName,
+		DAGRunID:         r.dagRunID,
+		StepName:         r.stepName,
+		Generation:       generation,
+		State:            browserhost.StateRunning,
+		CDPURL:           handle.CDPURL,
+		ExtensionID:      handle.ExtensionID,
+		ExtensionDir:     handle.ExtensionDir,
+		UserDataDir:      opts.UserDataDir,
+		OwnsUserDataDir:  r.profile == nil,
+		Profile:          r.cfg.Browser.Profile,
+		DownloadsDir:     opts.DownloadsDir,
+		BrowserPID:       handle.BrowserPID,
+		BrowserStartedAt: handle.BrowserStartedAt,
 	}
-	r.record.BrowserStartedAt, _ = procutil.StartTime(handle.BrowserPID)
+	recordCertProxy(&r.record, handle.CertProxy)
 	if err := r.saveRunningRecord(); err != nil {
 		return 0, err
 	}
 	if r.cfg.URL != "" {
-		if err := r.gotoURL(ctx, -1, r.cfg.URL, defaultOperationTimeout); err != nil {
+		result, err := r.gotoURL(ctx, -1, r.cfg.URL, defaultOperationTimeout)
+		if err != nil {
 			return 0, err
 		}
+		r.report(ctx, result.Report)
 	}
 	return 0, nil
 }
@@ -359,6 +372,15 @@ func (r *run) launchOptions(ctx context.Context, recordID string) (launchOptions
 	if err != nil {
 		return launchOptions{}, err
 	}
+	certificates, warnings, err := loadClientCertificates(ctx, r.cfg.Browser.ClientCertificates, runtime.GetEnv(ctx).WorkingDir)
+	if err != nil {
+		return launchOptions{}, err
+	}
+	for _, warning := range warnings {
+		r.warn(-1, warning)
+	}
+	guard := guardsCertificates(ctx, certificates)
+	r.certificateProxy = len(certificates) > 0 || guard
 	opts := launchOptions{
 		Executable:     r.cfg.Browser.Executable,
 		Headless:       r.cfg.headless(),
@@ -368,9 +390,13 @@ func (r *run) launchOptions(ctx context.Context, recordID string) (launchOptions
 		AllowedDomains: r.cfg.Browser.AllowedDomains,
 		NoSandbox:      cmnconfig.GetConfig(ctx).Browser.NoSandbox,
 		Generate:       r.bridge.generate,
+
+		ClientCertificates: certificates,
+		Guard:              guard,
+		Warn:               func(message string) { r.warn(-1, message) },
 	}
 	if name := r.cfg.Browser.Profile; name != "" {
-		lease, err := acquireProfile(ctx, r.browser, name, r.store, recordID)
+		lease, err := acquireProfile(ctx, r.browser, name, recordID, true)
 		if err != nil {
 			return launchOptions{}, err
 		}
@@ -406,331 +432,15 @@ func (r *run) saveRunningRecord() error {
 	return r.store.Save(r.record)
 }
 
-func (r *run) runOperation(ctx context.Context, index int, op operation) error {
-	timeout := op.timeout()
-	switch {
-	case op.Goto != "":
-		return r.gotoURL(ctx, index, op.Goto, timeout)
-	case op.Act != nil:
-		return r.act(ctx, index, *op.Act, timeout)
-	case op.Extract != nil:
-		return r.extract(ctx, index, *op.Extract, timeout)
-	case op.Expect != nil:
-		return r.expect(ctx, index, *op.Expect, timeout)
-	case op.Wait != nil:
-		return r.wait(ctx, index, *op.Wait, timeout)
-	case op.Screenshot != "":
-		return r.screenshot(ctx, index, op.Screenshot)
+// reportResult records what an operation did and publishes the values an
+// extract read. A screenshot operation is its own capture.
+func (r *run) reportResult(ctx context.Context, result opResult) {
+	maps.Copy(r.outputs, result.Values)
+	if result.Kind == opScreenshot {
+		r.timeline.Operation(result.Report)
+		return
 	}
-	return fmt.Errorf("unsupported operation %q", op.kind())
-}
-
-func (r *run) gotoURL(ctx context.Context, index int, target string, timeout time.Duration) error {
-	began := time.Now()
-	if err := checkAllowedDomain(target, r.cfg.Browser.AllowedDomains); err != nil {
-		return err
-	}
-	if err := r.eng.Goto(ctx, target, timeout); err != nil {
-		return err
-	}
-	r.report(ctx, agentstep.Report{Index: index, Kind: opGoto, Subject: target, Status: agentstep.StatusCompleted, Duration: time.Since(began)})
-	return nil
-}
-
-func (r *run) act(ctx context.Context, index int, spec actSpec, timeout time.Duration) error {
-	// Validation guarantees every reference names a variable or an earlier
-	// ask, so a missing value means that ask was skipped.
-	for _, name := range agentstep.VariableReferences(spec.Instruction) {
-		if _, ok := r.variables[name]; !ok {
-			return fmt.Errorf("the instruction uses %%%s%%, but the ask that sets it did not run", name)
-		}
-	}
-	began, before := time.Now(), r.bridge.totals()
-	// The document the page shows before the act tells whether an act that
-	// lost the page took effect. It stays empty when the page cannot be read.
-	document, _ := r.eng.DocumentID(ctx)
-	useCache := r.cache != nil && (spec.Cache == nil || *spec.Cache)
-	key := ""
-	if useCache {
-		pageURL, err := r.eng.CurrentURL(ctx)
-		if err != nil {
-			return err
-		}
-		key = replayKey(index, spec.Instruction, pageURL)
-	}
-	status := agentstep.StatusCompleted
-	if actions, ok := r.lookupCache(key); ok {
-		replayed, err := r.replay(ctx, actions, document, timeout)
-		if err != nil {
-			return err
-		}
-		if replayed {
-			r.report(ctx, agentstep.Report{
-				Index: index, Kind: opAct, Subject: spec.Instruction, Status: agentstep.StatusCacheHit,
-				Detail: describeActions(actions), Duration: time.Since(began),
-			})
-			return nil
-		}
-		status = agentstep.StatusHealed
-		// The recording is dropped unless the act that heals it records what
-		// it did.
-		r.cache.Drop(key)
-		// A recorded action before the miss may have loaded a new document.
-		document, _ = r.eng.DocumentID(ctx)
-	}
-	outcome, err := r.performAct(ctx, index, spec.Instruction, document, timeout)
-	if err != nil {
-		return err
-	}
-	if !outcome.Success {
-		if strings.Contains(outcome.Message, noActionFoundMessage) {
-			return fmt.Errorf("the model (%s) answered that no element on the page matches the instruction; "+
-				"if the element is on the page, reword the instruction or try another model, "+
-				"since some models give this answer for every request", r.bridge.modelName())
-		}
-		return fmt.Errorf("act did not complete: %s", outcome.Message)
-	}
-	if useCache && len(outcome.Actions) > 0 {
-		r.cache.Stage(key, outcome.Actions)
-	}
-	detail := describeActions(outcome.Actions)
-	if len(outcome.Actions) == 0 {
-		// An act counted done because it loaded a new document says so.
-		detail = outcome.Message
-	}
-	r.report(ctx, agentstep.Report{
-		Index: index, Kind: opAct, Subject: spec.Instruction, Status: status,
-		Detail: detail, Tokens: r.bridge.totals().sub(before).total(),
-		Duration: time.Since(began),
-	})
-	return nil
-}
-
-// replay performs recorded actions in order and reports whether every one
-// succeeded. document identifies the page's document before the first. An
-// action that lost the page is judged by the document it started on: a new
-// document means it took effect, and the next action runs there; the same
-// document means it did not, and the replay ends so the model acts instead.
-func (r *run) replay(ctx context.Context, actions []recordedAction, document string, timeout time.Duration) (bool, error) {
-	for i, action := range actions {
-		if i > 0 {
-			document, _ = r.eng.DocumentID(ctx)
-		}
-		replayed, err := r.eng.Replay(ctx, action, r.variables, timeout)
-		if errors.Is(err, errPageSessionLost) {
-			replayed, err = r.loadedNewDocument(ctx, document, err)
-		}
-		if err != nil || !replayed {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
-// performAct runs an act and judges one that lost the page by the page's
-// document: a document other than document means the act took effect, and
-// the same document means it did not, so it runs once more. Acting again
-// without that check could submit a form twice.
-func (r *run) performAct(ctx context.Context, index int, instruction, document string, timeout time.Duration) (actOutcome, error) {
-	for retried := false; ; retried = true {
-		outcome, err := r.eng.Act(ctx, instruction, r.variables, timeout)
-		if !errors.Is(err, errPageSessionLost) {
-			return outcome, err
-		}
-		loaded, judgeErr := r.loadedNewDocument(ctx, document, err)
-		if loaded {
-			return actOutcome{Success: true, Message: "the page loaded a new document before the act reported back"}, nil
-		}
-		if judgeErr != nil {
-			return actOutcome{}, judgeErr
-		}
-		if retried {
-			return actOutcome{}, err
-		}
-		_, _ = fmt.Fprintf(r.timeline.Log, "warning: %s the browser lost its connection to the page before the act took effect; running it again\n",
-			r.timeline.Position(index))
-	}
-}
-
-// loadedNewDocument reports whether the page shows a document other than
-// document after lost, an error wrapping errPageSessionLost. It returns lost
-// when the documents cannot be compared.
-func (r *run) loadedNewDocument(ctx context.Context, document string, lost error) (bool, error) {
-	if document == "" {
-		return false, lost
-	}
-	current, err := r.eng.DocumentID(ctx)
-	if err != nil {
-		return false, errors.Join(lost, err)
-	}
-	return current != document, nil
-}
-
-func (r *run) lookupCache(key string) ([]recordedAction, bool) {
-	if key == "" {
-		return nil, false
-	}
-	actions, ok := r.cache.Lookup(key)
-	return actions, ok && len(actions) > 0
-}
-
-func (r *run) extract(ctx context.Context, index int, spec extractSpec, timeout time.Duration) error {
-	began, before := time.Now(), r.bridge.totals()
-	schema, err := json.Marshal(spec.Schema)
-	if err != nil {
-		return fmt.Errorf("encode extract schema: %w", err)
-	}
-	data, err := r.eng.Extract(ctx, spec.Instruction, schema, timeout)
-	if err != nil {
-		return err
-	}
-	var values map[string]any
-	if err := json.Unmarshal(data, &values); err != nil {
-		return fmt.Errorf("extract returned a non-object value: %w", err)
-	}
-	// Only the fields a schema lists are published, matching the output
-	// names known when the DAG loads.
-	properties, listed := spec.Schema["properties"].(map[string]any)
-	for name, value := range values {
-		if _, ok := properties[name]; listed && !ok {
-			continue
-		}
-		r.outputs[name] = value
-	}
-	r.report(ctx, agentstep.Report{
-		Index: index, Kind: opExtract, Subject: spec.Instruction, Status: agentstep.StatusCompleted,
-		Detail: string(data), Tokens: r.bridge.totals().sub(before).total(), Duration: time.Since(began),
-	})
-	return nil
-}
-
-// expect fails unless the condition holds. A fixed check keeps reading the
-// page until its within window or the operation timeout, because the page
-// may still be updating.
-func (r *run) expect(ctx context.Context, index int, c condition, timeout time.Duration) error {
-	began, before := time.Now(), r.bridge.totals()
-	holds, reason, err := r.await(ctx, c, c.window(timeout), timeout)
-	if err != nil {
-		return err
-	}
-	if !holds {
-		return fmt.Errorf("expectation not met: %s", reason)
-	}
-	r.report(ctx, agentstep.Report{
-		Index: index, Kind: opExpect, Subject: c.String(), Status: agentstep.StatusCompleted, Detail: reason,
-		Tokens: r.bridge.totals().sub(before).total(), Duration: time.Since(began),
-	})
-	return nil
-}
-
-// await evaluates a condition. The model judges a statement once; a fixed
-// check is read repeatedly until it holds or window passes. A zero window
-// reads the page once.
-func (r *run) await(ctx context.Context, c condition, window, timeout time.Duration) (bool, string, error) {
-	deadline := time.Now().Add(window)
-	for {
-		holds, reason, err := r.evaluate(ctx, c, timeout)
-		if err != nil || holds || c.judged() || !time.Now().Before(deadline) {
-			return holds, reason, err
-		}
-		select {
-		case <-ctx.Done():
-			return false, "", ctx.Err()
-		case <-time.After(conditionPollInterval):
-		}
-	}
-}
-
-// evaluate reports whether a condition holds now, and why.
-func (r *run) evaluate(ctx context.Context, c condition, timeout time.Duration) (bool, string, error) {
-	switch {
-	case c.judged():
-		return r.judge(ctx, c.Statement, timeout)
-	case c.Text != "":
-		text, err := r.eng.PageText(ctx)
-		if err != nil {
-			return false, "", err
-		}
-		if strings.Contains(text, c.Text) {
-			return true, fmt.Sprintf("the page text contains %q", c.Text), nil
-		}
-		return false, fmt.Sprintf("the page text does not contain %q", c.Text), nil
-	case c.Selector != "":
-		visible, err := r.eng.SelectorVisible(ctx, c.Selector)
-		if err != nil {
-			return false, "", err
-		}
-		if visible {
-			return true, fmt.Sprintf("%q is visible", c.Selector), nil
-		}
-		return false, fmt.Sprintf("%q is not visible", c.Selector), nil
-	default:
-		current, err := r.eng.CurrentURL(ctx)
-		if err != nil {
-			return false, "", err
-		}
-		if strings.Contains(current, c.URL) {
-			return true, fmt.Sprintf("the URL contains %q", c.URL), nil
-		}
-		return false, fmt.Sprintf("the URL %s does not contain %q", current, c.URL), nil
-	}
-}
-
-func (r *run) wait(ctx context.Context, index int, spec waitSpec, timeout time.Duration) error {
-	began := time.Now()
-	subject := spec.Selector
-	if spec.Duration != "" {
-		duration, err := time.ParseDuration(spec.Duration)
-		if err != nil || duration <= 0 {
-			return fmt.Errorf("wait duration %q must be a positive duration", spec.Duration)
-		}
-		subject = spec.Duration
-		timer := time.NewTimer(duration)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
-		}
-	} else if err := r.eng.WaitForSelector(ctx, spec.Selector, timeout); err != nil {
-		return err
-	}
-	r.report(ctx, agentstep.Report{Index: index, Kind: opWait, Subject: subject, Status: agentstep.StatusCompleted, Duration: time.Since(began)})
-	return nil
-}
-
-func (r *run) screenshot(ctx context.Context, index int, name string) error {
-	began := time.Now()
-	data, err := r.eng.Screenshot(ctx)
-	if err != nil {
-		return err
-	}
-	rel, err := r.artifacts.WriteScreenshot(name, data)
-	if err != nil {
-		return err
-	}
-	r.timeline.Operation(agentstep.Report{
-		Index: index, Kind: opScreenshot, Subject: name, Status: agentstep.StatusCompleted,
-		Detail: rel, Duration: time.Since(began), Files: []string{rel},
-	})
-	return nil
-}
-
-// judge asks the model whether a statement holds for the current page.
-func (r *run) judge(ctx context.Context, statement string, timeout time.Duration) (bool, string, error) {
-	instruction := fmt.Sprintf("Decide whether this statement is true for the current page: %q. Set answer to true or false and give a one-sentence reason.", statement)
-	data, err := r.eng.Extract(ctx, instruction, statementSchema, timeout)
-	if err != nil {
-		return false, "", err
-	}
-	var verdict struct {
-		Answer bool   `json:"answer"`
-		Reason string `json:"reason"`
-	}
-	if err := json.Unmarshal(data, &verdict); err != nil {
-		return false, "", fmt.Errorf("decode statement verdict: %w", err)
-	}
-	return verdict.Answer, verdict.Reason, nil
+	r.report(ctx, result.Report)
 }
 
 // report records a finished operation, attaching a screenshot when every
@@ -798,6 +508,7 @@ func (r *run) fail(ctx context.Context, index int, kind string, cause error) err
 		cause = ctx.Err()
 	}
 	r.reportBlocked(index)
+	r.takeCertificateEvents(ctx, index)
 	var files []string
 	if r.cfg.screenshotPolicy() != screenshotsNever && r.artifacts.Enabled() && r.eng != nil {
 		if rel, err := r.capture(context.WithoutCancel(ctx), failureShotLabel); err == nil {
@@ -814,6 +525,11 @@ func (r *run) fail(ctx context.Context, index int, kind string, cause error) err
 	// fails, so the failure summarizes every request blocked in the attempt.
 	if len(r.blocked) > 0 {
 		message += "; browser.allowed_domains blocked " + r.masker.MaskString(describeBlocked(r.blocked))
+	}
+	for _, host := range slices.Sorted(maps.Keys(r.certificateFailures)) {
+		if failure := r.masker.MaskString(r.certificateFailures[host]); !strings.Contains(message, failure) {
+			message += "; client certificate: " + failure
+		}
 	}
 	usage := r.bridge.totals()
 	r.timeline.AppendEvent(ir.AgentSessionEvent{Type: agentstep.EventLifecycle, Status: agentstep.StatusFailed, Content: message, Files: files})

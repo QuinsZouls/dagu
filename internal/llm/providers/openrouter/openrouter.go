@@ -178,12 +178,7 @@ func (p *Provider) buildRequestBody(req *llm.ChatRequest, stream bool) ([]byte, 
 	// Note: max_tokens must be strictly higher than reasoning budget
 	var reasoningBudget int
 	if req.Thinking != nil && req.Thinking.Enabled {
-		reasoning := &reasoningRequest{}
-		if req.Thinking.Effort != "" {
-			reasoning.Effort = string(req.Thinking.Effort)
-		} else {
-			reasoning.Effort = string(llm.ThinkingEffortMedium)
-		}
+		reasoning := &reasoningRequest{Effort: string(reasoningEffort(req.Thinking.Effort))}
 		if req.Thinking.BudgetTokens != nil {
 			reasoning.MaxTokens = req.Thinking.BudgetTokens
 			reasoningBudget = *req.Thinking.BudgetTokens
@@ -246,6 +241,20 @@ func (p *Provider) buildRequestBody(req *llm.ChatRequest, stream bool) ([]byte, 
 	return json.Marshal(chatReq)
 }
 
+// reasoningEffort returns the reasoning effort to send: the requested level,
+// or xhigh for max, which the API lacks. An unset effort is medium.
+func reasoningEffort(effort llm.ThinkingEffort) llm.ThinkingEffort {
+	switch effort {
+	case llm.ThinkingEffortNone, llm.ThinkingEffortMinimal, llm.ThinkingEffortLow,
+		llm.ThinkingEffortMedium, llm.ThinkingEffortHigh, llm.ThinkingEffortXHigh:
+		return effort
+	case llm.ThinkingEffortMax:
+		return llm.ThinkingEffortXHigh
+	default:
+		return llm.ThinkingEffortMedium
+	}
+}
+
 // claudeRejectsForcedChoice reports whether a request forces tool use on a
 // Claude model that refuses it: every Claude model while reasoning, and
 // models from Claude 5 on.
@@ -285,6 +294,7 @@ func (p *Provider) streamResponse(ctx context.Context, body io.ReadCloser, event
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var usage *llm.Usage
+	var finishReason string
 
 	for scanner.Scan() {
 		select {
@@ -305,7 +315,7 @@ func (p *Provider) streamResponse(ctx context.Context, body io.ReadCloser, event
 
 		data := strings.TrimPrefix(line, streamPrefix)
 		if data == streamDoneMarker {
-			events <- llm.StreamEvent{Done: true, Usage: usage}
+			events <- llm.StreamEvent{Done: true, Usage: usage, FinishReason: finishReason}
 			return
 		}
 
@@ -323,18 +333,23 @@ func (p *Provider) streamResponse(ctx context.Context, body io.ReadCloser, event
 			}
 		}
 
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			events <- llm.StreamEvent{Delta: chunk.Choices[0].Delta.Content}
+		if len(chunk.Choices) > 0 {
+			if chunk.Choices[0].FinishReason != "" {
+				finishReason = chunk.Choices[0].FinishReason
+			}
+			if chunk.Choices[0].Delta.Content != "" {
+				events <- llm.StreamEvent{Delta: chunk.Choices[0].Delta.Content}
+			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		events <- llm.StreamEvent{Error: llm.WrapError(providerName, err), Done: true}
+		events <- llm.StreamEvent{Error: llm.WrapError(providerName, err), Done: true, FinishReason: finishReason}
 		return
 	}
 
 	// If we get here without [DONE], still signal completion
-	events <- llm.StreamEvent{Done: true, Usage: usage}
+	events <- llm.StreamEvent{Done: true, Usage: usage, FinishReason: finishReason}
 }
 
 // API request/response types (OpenAI-compatible)

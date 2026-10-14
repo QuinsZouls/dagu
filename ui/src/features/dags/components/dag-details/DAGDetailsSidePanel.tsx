@@ -51,6 +51,8 @@ type Props = {
   renderInPortal?: boolean;
   forceEnqueue?: boolean;
   onEnqueue?: EnqueueHandler;
+  /** Called after the user pins or unpins the DAG */
+  onPinnedChange?: () => void;
 };
 
 const CLOSE_ANIMATION_MS = 200;
@@ -121,6 +123,7 @@ function DAGDetailsSidePanel({
   renderInPortal = false,
   forceEnqueue = false,
   onEnqueue,
+  onPinnedChange,
 }: Props): React.ReactElement | null {
   const navigate = useNavigate();
   const remoteNode = useRemoteNode();
@@ -306,10 +309,11 @@ function DAGDetailsSidePanel({
                       size="icon"
                       onClick={handleFullscreenClick}
                       title="Open in fullscreen (F) - Cmd/Ctrl+Click to open in new tab"
+                  aria-label="Open in fullscreen"
                       className="relative group"
                     >
                       <Maximize2 className="h-4 w-4" />
-                      <span className="absolute -bottom-1 -right-1 bg-muted text-muted-foreground text-xs font-medium px-1 rounded-sm border opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span aria-hidden="true" className="absolute -bottom-1 -right-1 bg-muted text-muted-foreground text-xs font-medium px-1 rounded-sm border opacity-0 group-hover:opacity-100 transition-opacity">
                         <I18nText text={"F"} />
                       </span>
                     </Button></I18nProps>
@@ -318,10 +322,11 @@ function DAGDetailsSidePanel({
                       size="icon"
                       onClick={onClose}
                       title="Close (Esc)"
+                  aria-label="Close"
                       className="relative group"
                     >
                       <X className="h-4 w-4" />
-                      <span className="absolute -bottom-1 -right-1 bg-muted text-muted-foreground text-xs font-medium px-1 rounded-sm border opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span aria-hidden="true" className="absolute -bottom-1 -right-1 bg-muted text-muted-foreground text-xs font-medium px-1 rounded-sm border opacity-0 group-hover:opacity-100 transition-opacity">
                         <I18nText text={"Esc"} />
                       </span>
                     </Button></I18nProps>
@@ -332,7 +337,7 @@ function DAGDetailsSidePanel({
                   {loadState.state === 'loading' && (
                     <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
                       <LoadingIndicator />
-                      <p><I18nText text={"Loading DAG details..."} /></p>
+                      <p><I18nText text={"Loading workflow..."} /></p>
                     </div>
                   )}
 
@@ -385,6 +390,8 @@ function DAGDetailsSidePanel({
                       forceEnqueue={forceEnqueue}
                       autoOpenStartModal={false}
                       fillHeight
+                      pinned={data.pinned}
+                      onPinnedChange={onPinnedChange}
                     />
                   )}
                 </div>

@@ -230,6 +230,8 @@ func (a *API) DeleteDAG(ctx context.Context, request api.DeleteDAGRequestObject)
 		}
 	}
 
+	a.removeDAGPinAfterDelete(ctx, request.FileName)
+
 	a.logAudit(ctx, audit.CategoryDAG, "dag_delete", map[string]any{"dag_name": request.FileName})
 
 	return &api.DeleteDAG204Response{}, nil
@@ -414,6 +416,7 @@ func (a *API) RenameDAG(ctx context.Context, request api.RenameDAGRequestObject)
 		return nil, fmt.Errorf("failed to move DAG: %w", err)
 	}
 	a.migrateDAGSettingsAfterRename(ctx, request.FileName, request.Body.NewFileName)
+	a.migrateDAGPinAfterRename(ctx, request.FileName, request.Body.NewFileName)
 
 	a.logAudit(ctx, audit.CategoryDAG, "dag_rename", map[string]any{
 		"old_name": request.FileName,
@@ -535,6 +538,7 @@ func (a *API) getDAGDetailsData(ctx context.Context, fileName string) (api.GetDA
 		Dag:          details,
 		LatestDAGRun: ToDAGRunDetails(dagStatus),
 		Suspended:    suspended,
+		Pinned:       a.isDAGPinned(ctx, fileName),
 		LocalDags:    localDAGs,
 		Errors:       extractBuildErrors(dag.BuildErrors),
 		Warnings:     dag.BuildWarnings,
@@ -706,7 +710,7 @@ func (a *API) readHistoryData(_ context.Context, dag *ir.DAG, statusList []ir.DA
 					inDegree[step.Name] = 0
 				}
 				for _, step := range dag.Steps {
-					for _, dep := range step.Depends {
+					for _, dep := range step.AllDepends() {
 						adj[dep] = append(adj[dep], step.Name)
 						inDegree[step.Name]++
 					}
@@ -1609,6 +1613,9 @@ func (a *API) startPreparedDAGRunWithOptions(
 	if opts.triggerType != ir.TriggerTypeUnknown {
 		triggerTypeStr = opts.triggerType.String()
 	}
+	if err := launchParamsError(dispatchParams); err != nil {
+		return nil, err
+	}
 	target := opts.target
 	fromRunID := opts.fromRunID
 	if fromRunID != "" && dispatchParams != "" && len(dag.YamlData) > 0 {
@@ -1648,6 +1655,18 @@ func (a *API) startPreparedDAGRunWithOptions(
 	}
 
 	return started, a.waitForLocalDAGStart(ctx, dag, opts.dagRunID, started, timeout)
+}
+
+// launchParamsError refuses params larger than a launched run takes.
+func launchParamsError(params string) error {
+	if len(params) <= launcher.MaxParamsSize {
+		return nil
+	}
+	return &Error{
+		HTTPStatus: http.StatusBadRequest,
+		Code:       api.ErrorCodeBadRequest,
+		Message:    fmt.Sprintf("params exceed the %d byte limit", launcher.MaxParamsSize),
+	}
 }
 
 func buildRequiresLocalAPIError() *Error {
@@ -1775,6 +1794,9 @@ func (a *API) EnqueueDAGDAGRun(ctx context.Context, request api.EnqueueDAGDAGRun
 }
 
 func (a *API) enqueueDAGRun(ctx context.Context, dag *ir.DAG, params, dagRunID, nameOverride string, triggerType ir.TriggerType, labels, profileName string, noReuse bool, definitionID string) error {
+	if err := launchParamsError(params); err != nil {
+		return err
+	}
 	resolvedDAG, err := spec.ResolveRuntimeParams(ctx, dag, params, spec.ResolveRuntimeParamsOptions{
 		BaseConfig: a.config.Paths.BaseConfig,
 	})
@@ -2006,20 +2028,27 @@ func (a *API) GetDAGHistoryData(ctx context.Context, fileName string) (any, erro
 	})
 }
 
-// GetDAGsListData returns DAGs list for SSE.
+// GetDAGsListData returns DAGs list for SSE, with pinned DAGs first.
 // Identifier format: URL query string (e.g., "page=1&perPage=100&name=mydag")
 func (a *API) GetDAGsListData(ctx context.Context, queryString string) (any, error) {
-	return a.getDAGsListData(ctx, queryString, false)
+	return a.getDAGsListData(ctx, queryString, dagListSource{pinnedFirst: true})
 }
 
 // GetDAGsListDataIncludingAltDirs is like GetDAGsListData but the returned list
 // also includes DAGs found under paths.alt_dags_dir. Query semantics are applied
-// to the combined collection.
+// to the combined collection, and pins do not affect the order.
 func (a *API) GetDAGsListDataIncludingAltDirs(ctx context.Context, queryString string) (any, error) {
-	return a.getDAGsListData(ctx, queryString, true)
+	return a.getDAGsListData(ctx, queryString, dagListSource{includeSearchPaths: true})
 }
 
-func (a *API) getDAGsListData(ctx context.Context, queryString string, includeSearchPaths bool) (any, error) {
+// dagListSource selects which DAGs a list includes and whether pinned DAGs
+// come first. Every list reports which DAGs are pinned.
+type dagListSource struct {
+	includeSearchPaths bool
+	pinnedFirst        bool
+}
+
+func (a *API) getDAGsListData(ctx context.Context, queryString string, source dagListSource) (any, error) {
 	return withDAGRunReadTimeout(ctx, dagRunReadRequestInfo{
 		endpoint: "/dags",
 	}, func(readCtx context.Context) (any, error) {
@@ -2027,7 +2056,7 @@ func (a *API) getDAGsListData(ctx context.Context, queryString string, includeSe
 		if err != nil {
 			return nil, err
 		}
-		return a.listDAGsDataWithSearchPaths(readCtx, listOpts, includeSearchPaths)
+		return a.listDAGsDataWithSearchPaths(readCtx, listOpts, source)
 	})
 }
 
@@ -2089,25 +2118,29 @@ func (a *API) buildDAGListOptions(ctx context.Context, queryString string) (pers
 }
 
 func (a *API) listDAGsData(ctx context.Context, listOpts persis.DAGListOptions) (api.ListDAGs200JSONResponse, error) {
-	return a.listDAGsDataWithSearchPaths(ctx, listOpts, false)
+	return a.listDAGsDataWithSearchPaths(ctx, listOpts, dagListSource{pinnedFirst: true})
 }
 
-// listDAGsDataWithSearchPaths lists DAGs and, when includeSearchPaths is true,
-// also includes DAGs found under the configured alternate directory
+// listDAGsDataWithSearchPaths lists DAGs and, when source.includeSearchPaths
+// is true, also includes DAGs found under the configured alternate directory
 // (paths.alt_dags_dir). Query semantics are applied to the combined collection.
-func (a *API) listDAGsDataWithSearchPaths(ctx context.Context, listOpts persis.DAGListOptions, includeSearchPaths bool) (api.ListDAGs200JSONResponse, error) {
+func (a *API) listDAGsDataWithSearchPaths(ctx context.Context, listOpts persis.DAGListOptions, source dagListSource) (api.ListDAGs200JSONResponse, error) {
 	projectionTime := time.Now()
 	nextRunProjection := a.nextRunProjection(ctx)
 
 	listOpts.Time = &projectionTime
 	listOpts.NextRunProjection = nextRunProjection
+	pinnedIDs := a.pinnedDAGIDs(ctx)
+	if source.pinnedFirst {
+		listOpts.PinnedIDs = pinnedIDs
+	}
 
 	var (
 		result  pagination.PaginatedResult[persis.DAGListItem]
 		errList []string
 		err     error
 	)
-	if includeSearchPaths {
+	if source.includeSearchPaths {
 		result, errList, err = a.dagRepository.ListIncludingSearchPaths(ctx, listOpts)
 	} else {
 		result, errList, err = a.dagRepository.List(ctx, listOpts)
@@ -2128,10 +2161,12 @@ func (a *API) listDAGsDataWithSearchPaths(ctx context.Context, listOpts persis.D
 			nextRunAt = &nextRun
 		}
 
+		_, pinned := pinnedIDs[item.ID]
 		dagFile := api.DAGFile{
 			FileName:     item.ID,
 			LatestDAGRun: toDAGRunSummary(dagStatus),
 			Suspended:    item.Suspended,
+			Pinned:       pinned,
 			Dag:          toDAG(item.DAG),
 			NextRun:      nextRunAt,
 			Errors:       extractBuildErrors(item.BuildErrors),

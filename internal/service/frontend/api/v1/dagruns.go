@@ -1125,7 +1125,7 @@ func (a *API) GetDAGRunStepLog(ctx context.Context, request api.GetDAGRunStepLog
 	if err != nil {
 		return nil, err
 	}
-	logFile := selectLogFile(node, *request.Params.Stream)
+	logFile := selectLogFile(node, valueOf(request.Params.Stream))
 
 	content, lineCount, totalLines, hasMore, isEstimate, err := fileutil.ReadLogContent(logFile, options)
 	if err != nil {
@@ -2666,7 +2666,7 @@ func (a *API) GetSubDAGRunStepLog(ctx context.Context, request api.GetSubDAGRunS
 	if err != nil {
 		return nil, err
 	}
-	logFile := selectLogFile(node, *request.Params.Stream)
+	logFile := selectLogFile(node, valueOf(request.Params.Stream))
 
 	content, lineCount, totalLines, hasMore, isEstimate, err := fileutil.ReadLogContent(logFile, options)
 	if err != nil {
@@ -4501,14 +4501,16 @@ func (a *API) getDAGRunLogsData(ctx context.Context, identifier string) (DAGRunL
 	}, nil
 }
 
-// GetStepLogData returns step log for SSE.
+// GetStepLogData returns the stdout log of a step for SSE.
 // Identifier format: "dagName/dagRunId/stepName"
 func (a *API) GetStepLogData(ctx context.Context, identifier string) (any, error) {
 	parts := strings.SplitN(identifier, "/", 3)
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid identifier format: %s (expected 'dagName/dagRunId/stepName')", identifier)
 	}
-	return a.GetStepLogDataByRef(ctx, ir.NewDAGRunRef(parts[0], parts[1]), parts[2], StepLogReadOptions{})
+	return a.GetStepLogDataByRef(ctx, ir.NewDAGRunRef(parts[0], parts[1]), parts[2], StepLogReadOptions{
+		Stream: string(api.StreamStdout),
+	})
 }
 
 // StepLogReadOptions selects which step log streams and lines to return.
@@ -4584,7 +4586,12 @@ func (a *API) stepLogFromStatus(ctx context.Context, dagStatus *ir.DAGRunStatus,
 	if err != nil {
 		return StepLogResponse{}, fmt.Errorf("step %s not found in DAG %s", stepName, dagStatus.Name)
 	}
+	return a.stepLogFromFiles(ctx, node.Stdout, node.Stderr, stepName, opts)
+}
 
+// stepLogFromFiles reads a step's stdout and stderr files as the step log
+// response. An empty path leaves that stream empty.
+func (a *API) stepLogFromFiles(ctx context.Context, stdoutPath, stderrPath, stepName string, opts StepLogReadOptions) (StepLogResponse, error) {
 	options := opts.logReadOptions(a.logEncodingCharset)
 	readStdout := opts.Stream == "" || opts.Stream == string(api.StreamStdout)
 	readStderr := opts.Stream == "" || opts.Stream == string(api.StreamStderr)
@@ -4594,8 +4601,9 @@ func (a *API) stepLogFromStatus(ctx context.Context, dagStatus *ir.DAGRunStatus,
 	var stdoutContent string
 	var lineCount, totalLines int
 	var hasMore bool
-	if readStdout && node.Stdout != "" {
-		stdoutContent, lineCount, totalLines, hasMore, _, err = fileutil.ReadLogContent(node.Stdout, options)
+	var err error
+	if readStdout && stdoutPath != "" {
+		stdoutContent, lineCount, totalLines, hasMore, _, err = fileutil.ReadLogContent(stdoutPath, options)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return StepLogResponse{}, fmt.Errorf("error reading stdout: %w", err)
 		}
@@ -4603,16 +4611,16 @@ func (a *API) stepLogFromStatus(ctx context.Context, dagStatus *ir.DAGRunStatus,
 
 	// Read stderr
 	var stderrContent string
-	if readStderr && node.Stderr != "" {
+	if readStderr && stderrPath != "" {
 		var stderrLineCount, stderrTotalLines int
 		var stderrHasMore bool
-		stderrContent, stderrLineCount, stderrTotalLines, stderrHasMore, _, err = fileutil.ReadLogContent(node.Stderr, options)
+		stderrContent, stderrLineCount, stderrTotalLines, stderrHasMore, _, err = fileutil.ReadLogContent(stderrPath, options)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			// Log warning for real errors, return empty stderr
 			logger.Warn(ctx, "Failed to read stderr log",
 				tag.Error(err),
 				slog.String("stepName", stepName),
-				slog.String("stderrPath", node.Stderr),
+				slog.String("stderrPath", stderrPath),
 			)
 			stderrContent = ""
 		}
@@ -4929,14 +4937,21 @@ func (a *API) GetDAGRunsListData(ctx context.Context, queryString string) (any, 
 
 		page, err := a.dagRunRepository.ListStatusesPage(readCtx, opts.query)
 		if err != nil {
-			if errors.Is(err, persis.ErrInvalidDAGRunQueryCursor) {
-				return nil, err
+			if apiErr := dagRunListBadRequest(err); apiErr != nil {
+				return nil, apiErr
 			}
 			return nil, fmt.Errorf("error listing dag-runs: %w", err)
 		}
 
 		return toDAGRunsPageResponse(page), nil
 	})
+}
+
+// ValidateDAGRunsListQuery returns a 400 *Error when GetDAGRunsListData would
+// reject the query string's filters.
+func (a *API) ValidateDAGRunsListQuery(ctx context.Context, queryString string) error {
+	_, err := a.dagRunListOptionsFromQueryString(ctx, queryString)
+	return err
 }
 
 func (a *API) dagRunListOptionsFromQueryString(ctx context.Context, queryString string) (dagRunListOptions, error) {
@@ -4946,6 +4961,11 @@ func (a *API) dagRunListOptionsFromQueryString(ctx context.Context, queryString 
 			tag.Error(err),
 			slog.String("queryString", queryString),
 		)
+		return dagRunListOptions{}, &Error{
+			HTTPStatus: http.StatusBadRequest,
+			Code:       api.ErrorCodeBadRequest,
+			Message:    fmt.Sprintf("invalid query parameters: %s", err),
+		}
 	}
 
 	var (
@@ -4974,18 +4994,18 @@ func (a *API) dagRunListOptionsFromQueryString(ctx context.Context, queryString 
 		statusValues = &parsed
 	}
 	if rawFromDate := params.Get("fromDate"); rawFromDate != "" {
-		if ts, convErr := strconv.ParseInt(rawFromDate, 10, 64); convErr == nil {
-			fromDate = &ts
-		} else {
-			logger.Warn(ctx, "Invalid fromDate parameter", slog.String("fromDate", rawFromDate), tag.Error(convErr))
+		ts, convErr := strconv.ParseInt(rawFromDate, 10, 64)
+		if convErr != nil {
+			return dagRunListOptions{}, invalidDAGRunListParam(ctx, "fromDate", rawFromDate, convErr)
 		}
+		fromDate = &ts
 	}
 	if rawToDate := params.Get("toDate"); rawToDate != "" {
-		if ts, convErr := strconv.ParseInt(rawToDate, 10, 64); convErr == nil {
-			toDate = &ts
-		} else {
-			logger.Warn(ctx, "Invalid toDate parameter", slog.String("toDate", rawToDate), tag.Error(convErr))
+		ts, convErr := strconv.ParseInt(rawToDate, 10, 64)
+		if convErr != nil {
+			return dagRunListOptions{}, invalidDAGRunListParam(ctx, "toDate", rawToDate, convErr)
 		}
+		toDate = &ts
 	}
 	if rawName := params.Get("name"); rawName != "" {
 		name = &rawName
@@ -5007,11 +5027,11 @@ func (a *API) dagRunListOptionsFromQueryString(ctx context.Context, queryString 
 		labels = &rawTags
 	}
 	if rawLimit := params.Get("limit"); rawLimit != "" {
-		if parsed, convErr := strconv.Atoi(rawLimit); convErr == nil {
-			limit = &parsed
-		} else {
-			logger.Warn(ctx, "Invalid limit parameter", slog.String("limit", rawLimit), tag.Error(convErr))
+		parsed, convErr := strconv.Atoi(rawLimit)
+		if convErr != nil {
+			return dagRunListOptions{}, invalidDAGRunListParam(ctx, "limit", rawLimit, convErr)
 		}
+		limit = &parsed
 	}
 	if rawCursor := params.Get("cursor"); rawCursor != "" {
 		cursor = &rawCursor
@@ -5048,6 +5068,15 @@ func toCoreStatuses(statuses *api.StatusList) []ir.Status {
 		result = append(result, ir.Status(status))
 	}
 	return result
+}
+
+func invalidDAGRunListParam(ctx context.Context, name, value string, err error) *Error {
+	logger.Warn(ctx, "Invalid "+name+" parameter", slog.String(name, value), tag.Error(err))
+	return &Error{
+		HTTPStatus: http.StatusBadRequest,
+		Code:       api.ErrorCodeBadRequest,
+		Message:    fmt.Sprintf("invalid %s parameter: %q", name, value),
+	}
 }
 
 func parseStatusListQueryValues(ctx context.Context, rawValues []string) (api.StatusList, error) {

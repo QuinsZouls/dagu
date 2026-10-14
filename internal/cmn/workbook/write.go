@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -64,7 +66,6 @@ const (
 	headerFill  = "DDEBF7"
 	minColWidth = 8.0
 	maxColWidth = 60.0
-	fmtInteger  = 1
 	fmtText     = 49
 	fmtNumber   = "#,##0.00"
 	fmtDate     = "yyyy-mm-dd"
@@ -250,10 +251,29 @@ func writeOnce(ctx context.Context, path string, table Table, opts WriteOptions)
 	if opts.DryRun {
 		return result, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ensureParentDir(path); err != nil {
+		return nil, err
+	}
 	if err := w.save(opts.InPlace); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// ensureParentDir creates the output directory only after a write has been
+// validated. Existing directories keep their permissions.
+func ensureParentDir(path string) error {
+	dir := filepath.Dir(path)
+	if info, err := os.Stat(dir); err == nil && !info.IsDir() {
+		return fmt.Errorf("%s: parent path %q is not a directory", filepath.Base(path), dir)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("%s: create parent directory %q: %w", filepath.Base(path), dir, err)
+	}
+	return nil
 }
 
 // notMerged refuses an appended cell inside a merged cell.
@@ -478,7 +498,7 @@ func lastUsedRow(grid [][]string, used region) int {
 }
 
 // columnKinds picks the kind each column is written as: the pinned type, or
-// the dominant kind of its values.
+// the dominant kind of its values, where a whole number is an integer.
 func columnKinds(table Table, types map[string]ColumnType) []ColumnType {
 	kinds := make([]ColumnType, len(table.Columns))
 	for c, name := range table.Columns {
@@ -489,28 +509,44 @@ func columnKinds(table Table, types map[string]ColumnType) []ColumnType {
 		counts := map[string]int{}
 		for _, row := range table.Rows {
 			if c < len(row) {
-				if k := detectKind(row[c]); k != "" {
+				k := detectKind(row[c])
+				// JSON numbers arrive as float64, whole ones included.
+				if f, ok := row[c].(float64); ok && wholeNumber(f) {
+					k = string(TypeInteger)
+				}
+				if k != "" {
 					counts[k]++
 				}
 			}
 		}
 		best, bestCount := "", 0
-		for _, k := range []string{string(TypeString), string(TypeInteger), string(TypeNumber), string(TypeDate), string(TypeDateTime), string(TypeBoolean)} {
-			if counts[k] > bestCount {
-				best, bestCount = k, counts[k]
+		// Integers and decimals count as one kind, and a column mixing
+		// them is a number column.
+		numeric := counts[string(TypeInteger)] + counts[string(TypeNumber)]
+		for _, k := range []string{string(TypeString), string(TypeInteger), string(TypeDate), string(TypeDateTime), string(TypeBoolean)} {
+			n := counts[k]
+			if k == string(TypeInteger) {
+				n = numeric
+			}
+			if n > bestCount {
+				best, bestCount = k, n
 			}
 		}
-		// A column mixing integers and decimals is a number column, and
-		// one mixing dates and datetimes keeps the time.
 		if best == string(TypeInteger) && counts[string(TypeNumber)] > 0 {
 			best = string(TypeNumber)
 		}
+		// A column mixing dates and datetimes keeps the time.
 		if best == string(TypeDate) && counts[string(TypeDateTime)] > 0 {
 			best = string(TypeDateTime)
 		}
 		kinds[c] = ColumnType(best)
 	}
 	return kinds
+}
+
+// wholeNumber reports whether f is written as an integer cell.
+func wholeNumber(f float64) bool {
+	return f == math.Trunc(f) && math.Abs(f) <= maxExactInt
 }
 
 // outValue converts a table value into what the cell receives. Pinned
@@ -560,7 +596,7 @@ func (w *file) setCell(sheet string, col, row int, v any) error {
 	case int:
 		err = w.f.SetCellInt(sheet, cell, int64(x))
 	case float64:
-		if x == math.Trunc(x) && math.Abs(x) <= maxExactInt {
+		if wholeNumber(x) {
 			err = w.f.SetCellInt(sheet, cell, int64(x))
 		} else {
 			err = w.f.SetCellFloat(sheet, cell, x, -1, 64)
@@ -636,7 +672,9 @@ func (w *file) styleTable(sheet string, table Table, kinds []ColumnType, startRo
 func kindStyle(kind ColumnType) *excelize.Style {
 	switch kind {
 	case TypeInteger:
-		return &excelize.Style{NumFmt: fmtInteger}
+		// Integers keep General, which shows a whole number plain and a
+		// fraction appended below it with its digits.
+		return nil
 	case TypeNumber:
 		f := fmtNumber
 		return &excelize.Style{CustomNumFmt: &f}

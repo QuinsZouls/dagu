@@ -1365,6 +1365,81 @@ func TestDAGRunListOptionsFromQueryStringRejectsInvalidStatuses(t *testing.T) {
 	require.Contains(t, apiErr.Message, "invalid status parameter")
 }
 
+func TestValidateDAGRunsListQuery(t *testing.T) {
+	t.Parallel()
+
+	api := &API{}
+	require.NoError(t, api.ValidateDAGRunsListQuery(
+		context.Background(),
+		"fromDate=1700000000&toDate=1700086400&limit=25",
+	))
+
+	cases := []struct {
+		name        string
+		queryString string
+		wantMessage string
+	}{
+		{name: "fromDate", queryString: "fromDate=not-a-timestamp", wantMessage: `invalid fromDate parameter: "not-a-timestamp"`},
+		{name: "toDate", queryString: "toDate=not-a-timestamp", wantMessage: `invalid toDate parameter: "not-a-timestamp"`},
+		{name: "limit", queryString: "limit=many", wantMessage: `invalid limit parameter: "many"`},
+		{name: "padded limit", queryString: "limit=10+", wantMessage: `invalid limit parameter: "10 "`},
+		{name: "malformed query", queryString: "fromDate=%zz", wantMessage: "invalid query parameters"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := api.ValidateDAGRunsListQuery(context.Background(), tc.queryString)
+
+			var apiErr *Error
+			require.ErrorAs(t, err, &apiErr)
+			require.Equal(t, http.StatusBadRequest, apiErr.HTTPStatus)
+			require.Equal(t, openapiv1.ErrorCodeBadRequest, apiErr.Code)
+			require.Contains(t, apiErr.Message, tc.wantMessage)
+		})
+	}
+}
+
+func TestGetDAGRunsListDataRejectsInvalidCursor(t *testing.T) {
+	t.Parallel()
+
+	api := &API{
+		dagRunRepository: persis.NewDAGRunRepository(invalidCursorDAGRunStore{}, nil, persis.DAGRunRepositoryOptions{}),
+	}
+
+	_, err := api.GetDAGRunsListData(context.Background(), "cursor=stale")
+
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, http.StatusBadRequest, apiErr.HTTPStatus)
+	require.Equal(t, openapiv1.ErrorCodeBadRequest, apiErr.Code)
+}
+
+type invalidCursorDAGRunStore struct {
+	testutil.DAGRunStoreStub
+}
+
+func (invalidCursorDAGRunStore) QueryStatuses(context.Context, persis.DAGRunStatusQuery) (persis.DAGRunStatusPage, error) {
+	return persis.DAGRunStatusPage{}, fmt.Errorf("%w: filters changed", persis.ErrInvalidDAGRunQueryCursor)
+}
+
+func TestDAGRunListQueryParsesDateRange(t *testing.T) {
+	t.Parallel()
+
+	api := &API{}
+	opts, err := api.dagRunListOptionsFromQueryString(
+		context.Background(),
+		"fromDate=1700000000&toDate=1700086400&limit=25",
+	)
+	require.NoError(t, err)
+
+	applied := statusQueryFromOptions(t, opts.query)
+
+	require.Equal(t, time.Unix(1700000000, 0).UTC(), applied.From.Time)
+	require.Equal(t, time.Unix(1700086400, 0).UTC(), applied.To.Time)
+	require.Equal(t, 25, applied.Limit)
+}
+
 type blockingDAGRunStore struct {
 	testutil.DAGRunStoreStub
 }
@@ -1578,6 +1653,44 @@ func TestSubDAGRunDataRequiresRootAndChildWorkspaceAccess(t *testing.T) {
 	apiErr = nil
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, http.StatusNotFound, apiErr.HTTPStatus)
+}
+
+// The live step log stream feeds a stdout-only viewer, so reading stderr on
+// every refresh is wasted I/O.
+func TestStepLogStreamReadsOnlyStdout(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	stdoutPath := filepath.Join(dir, "stdout.log")
+	stderrPath := filepath.Join(dir, "stderr.log")
+	require.NoError(t, os.WriteFile(stdoutPath, []byte("out\n"), 0o600))
+	require.NoError(t, os.WriteFile(stderrPath, []byte("err\n"), 0o600))
+
+	repository := testutil.NewFileDAGRunRepository(t.TempDir(), persis.DAGRunRepositoryOptions{})
+	dag := &ir.DAG{Name: "logs"}
+	attempt, err := repository.CreateAttempt(ctx, dag, time.Now(), "run-1", persis.DAGRunCreateAttemptOptions{})
+	require.NoError(t, err)
+	require.NoError(t, attempt.Open(ctx))
+	status := ir.InitialStatus(dag)
+	status.DAGRunID = "run-1"
+	status.AttemptID = attempt.ID()
+	status.Nodes = []*ir.Node{{Step: ir.Step{Name: "main"}, Stdout: stdoutPath, Stderr: stderrPath}}
+	require.NoError(t, attempt.Write(ctx, status))
+	require.NoError(t, attempt.Close(ctx))
+
+	cfg := &config.Config{}
+	a := &API{
+		dagRunRepository: repository,
+		dagRunMgr:        runtimepkg.NewManager(repository, nil, cfg),
+		config:           cfg,
+	}
+
+	result, err := a.GetStepLogData(ctx, "logs/run-1/main")
+
+	require.NoError(t, err)
+	resp, ok := result.(StepLogResponse)
+	require.True(t, ok)
+	require.Equal(t, "out", resp.StdoutContent)
+	require.Empty(t, resp.StderrContent)
 }
 
 func TestStepLogLimitWithoutOffsetReadsFromBeginning(t *testing.T) {

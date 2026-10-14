@@ -16,6 +16,7 @@ import (
 	"image"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -63,6 +64,18 @@ type Backend interface {
 	Key(key Key, down bool) error
 	// Type types text at the keyboard focus.
 	Type(text string) error
+	// FocusedWindow reports the window that has the keyboard focus, or a
+	// zero WindowID where the system does not say.
+	FocusedWindow() WindowID
+	// WindowAt reports the top-level window under a physical pixel
+	// position, or a zero WindowID where the system does not say.
+	WindowAt(x, y int) WindowID
+	// Windows lists the visible top-level windows, the front of the
+	// Z-order first. It is empty where the system does not enumerate them.
+	Windows() []WindowID
+	// Raise brings a window to the foreground. It is a best effort: the
+	// system may refuse a foreground change asked by a background process.
+	Raise(w WindowID) error
 	// LastInput reports when the desktop last received pointer or keyboard
 	// input from any source, the driver included, or the zero time when it
 	// cannot tell.
@@ -126,11 +139,33 @@ const (
 	inputEcho = time.Second
 )
 
+// WindowID names a top-level window the way the system reports it, so a
+// step can tell whether the focus moved and whose window an action would
+// operate.
+type WindowID struct {
+	Handle uint64
+	Title  string
+	PID    uint32
+	// App is the window's process image name without its extension, the
+	// stable identity a replay raises a window by, since a title often
+	// shows the document's contents. Empty where the system does not say.
+	App string
+}
+
+// Known reports a window the system named.
+func (w WindowID) Known() bool { return w.Handle != 0 }
+
 // Driver performs desktop actions on a Backend.
 type Driver struct {
 	backend Backend
 	// lastInput is when the driver last sent input.
 	lastInput time.Time
+	// owned are the processes whose windows the driver never operates: its
+	// own, and the ones that started it, which is the automation's own
+	// application. Listing processes takes a moment, so it waits for the
+	// first action that needs it.
+	owned     map[uint32]bool
+	ownedOnce sync.Once
 }
 
 // New returns a driver for a backend.
@@ -140,9 +175,61 @@ func New(backend Backend) *Driver {
 	return d
 }
 
+func (d *Driver) family() map[uint32]bool {
+	d.ownedOnce.Do(func() {
+		family := ownProcessFamily()
+		for pid := range d.owned {
+			family[pid] = true
+		}
+		d.owned = family
+	})
+	return d.owned
+}
+
+// FocusedWindow reports the window that has the keyboard focus.
+func (d *Driver) FocusedWindow() WindowID { return d.backend.FocusedWindow() }
+
+// WindowAt reports the top-level window under a display position.
+func (d *Driver) WindowAt(at image.Point) WindowID { return d.backend.WindowAt(at.X, at.Y) }
+
+// Windows lists the visible top-level windows, the front of the Z-order
+// first, so a step can find one to bring forward.
+func (d *Driver) Windows() []WindowID { return d.backend.Windows() }
+
+// Raise brings a window to the foreground, a best effort.
+func (d *Driver) Raise(w WindowID) error { return d.backend.Raise(w) }
+
+// Protect adds processes whose windows the driver never operates.
+func (d *Driver) Protect(pids ...uint32) {
+	if d.owned == nil {
+		d.owned = map[uint32]bool{}
+	}
+	for _, pid := range pids {
+		d.owned[pid] = true
+	}
+}
+
+// Owned reports a window of the automation's own application, which a step
+// never operates: a keystroke to it could close the application that runs
+// the step.
+func (d *Driver) Owned(w WindowID) bool { return w.PID != 0 && d.family()[w.PID] }
+
 // InputSentAt reports when the driver last sent input.
 func (d *Driver) InputSentAt() time.Time {
 	return d.lastInput
+}
+
+// sinceLastUse reports how long ago the desktop last saw any input, the
+// driver's own included. It is zero when the clock cannot be read.
+func (d *Driver) sinceLastUse() time.Duration {
+	last := d.backend.LastInput()
+	if last.IsZero() {
+		return 0
+	}
+	if since := time.Since(last); since > 0 {
+		return since
+	}
+	return 0
 }
 
 // AssumeInputSent records that input was sent at, such as by an earlier
@@ -167,11 +254,12 @@ func (d *Driver) PersonInputSince(since time.Time) bool {
 }
 
 // WaitForIdle returns once nobody but the driver has used the desktop for
-// idle, checking every poll. onWait runs once if the driver has to wait.
-func (d *Driver) WaitForIdle(ctx context.Context, idle, poll time.Duration, onWait func()) error {
+// idle, checking every poll. onWait runs once if the driver has to wait,
+// told how long ago the desktop was last used so a view can say why.
+func (d *Driver) WaitForIdle(ctx context.Context, idle, poll time.Duration, onWait func(lastUsed time.Duration)) error {
 	for waited := false; d.PersonInputSince(time.Now().Add(-idle)); waited = true {
 		if !waited {
-			onWait()
+			onWait(d.sinceLastUse())
 		}
 		if err := pause(ctx, poll); err != nil {
 			return err

@@ -27,7 +27,7 @@ import { SchemaProvider } from './contexts/SchemaContext';
 import { SearchStateProvider } from './contexts/SearchStateContext';
 import {
   UserPreferencesProvider,
-  useUserPreferences,
+  useResolvedTheme,
 } from './contexts/UserPreference';
 import Layout from './layouts/Layout';
 import fetchJson from './lib/fetchJson';
@@ -80,6 +80,7 @@ const NotificationRulesPage = React.lazy(
   () => import('./pages/notification-rules')
 );
 const NotificationsPage = React.lazy(() => import('./pages/notifications'));
+const NotFoundPage = React.lazy(() => import('./pages/not-found'));
 const OverviewPage = React.lazy(() => import('./pages/overview'));
 const ViewPage = React.lazy(() => import('./pages/views'));
 const ProfilesPage = React.lazy(() => import('./pages/profiles'));
@@ -115,7 +116,7 @@ const STATIC_PAGE_TITLES = new Set([
   'Notifications',
   'Profiles & Secrets',
   'Queue',
-  'Queue Dashboard',
+  'Queues',
   'Remote Nodes',
   'Search',
   'System Status',
@@ -267,7 +268,7 @@ class LazyRouteErrorBoundary extends React.Component<
           </p>
           <button
             type="button"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            className="rounded-md bg-primary-fill px-4 py-2 text-sm font-medium text-primary-foreground"
             onClick={() => window.location.reload()}
           >
             <I18nText text={'Reload'} />
@@ -304,8 +305,7 @@ function AppInner({ config: initialConfig }: Props): React.ReactElement {
   }, []);
 
   const [title, setTitle] = React.useState<string>('');
-  const { preferences } = useUserPreferences();
-  const theme = preferences.theme || 'dark';
+  const theme = useResolvedTheme();
 
   const [remoteNodes, setRemoteNodes] = React.useState<string[]>(() =>
     parseRemoteNodes(config.remoteNodes)
@@ -548,6 +548,7 @@ function AppInner({ config: initialConfig }: Props): React.ReactElement {
 
   React.useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
     document.documentElement.style.backgroundColor = 'var(--background)';
   }, [theme]);
 
@@ -828,6 +829,10 @@ function AppInner({ config: initialConfig }: Props): React.ReactElement {
                                             <GitSyncPage />
                                           </GitSyncElement>
                                         }
+                                      />
+                                      <Route
+                                        path="*"
+                                        element={<NotFoundPage />}
                                       />
                                     </LazyRoutes>
                                   </Layout>

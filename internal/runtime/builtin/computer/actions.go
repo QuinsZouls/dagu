@@ -24,31 +24,52 @@ const maxActionPause = time.Minute
 // positionMapper converts a position an action names into display pixels.
 type positionMapper func(computeruse.Point) image.Point
 
-// perform runs a turn's actions in order on the screen the model saw,
-// stopping at the first failure. It returns one result per action and the
-// actions that completed, in display pixels, for the replay cache.
-func (r *run) perform(ctx context.Context, index int, actions []computeruse.Action, seen screen, limit computeruse.ImageLimit) ([]computeruse.Result, []recordedAction) {
-	results := make([]computeruse.Result, 0, len(actions))
-	var recorded []recordedAction
-	failed := false
-	for _, action := range actions {
-		if failed {
-			results = append(results, computeruse.Result{CallID: action.CallID, Skipped: true})
-			continue
+// performOne runs one action on the screen the model saw and records it for
+// the replay cache when it completed and can be replayed. The recorded
+// action is nil when the action only read the screen or failed.
+func (r *run) performOne(ctx context.Context, index int, action computeruse.Action, seen screen, limit computeruse.ImageLimit) (computeruse.Result, *recordedAction) {
+	logAction(r.timeline, index, describeAction(action))
+	// The element the action lands on is read before the action changes the
+	// screen; the pointer has not moved yet either.
+	display, replayable := r.toDisplay(action, seen)
+	var element *recordedElement
+	if replayable {
+		element = r.elementOf(display)
+	}
+	result := r.runAction(ctx, action, seen.toFull, &seen, limit)
+	if result.Failed() {
+		logAction(r.timeline, index, "  failed: "+result.Error)
+		return result, nil
+	}
+	if !replayable {
+		return result, nil
+	}
+	if element != nil && action.Kind == computeruse.KindType {
+		r.proveValue(element, action.Text)
+	}
+	rec := recordAction(display, seen.full, element)
+	return result, &rec
+}
+
+// elementOf reads the element a replayable action lands on, in display
+// pixels, or types into, when the host can read elements.
+func (r *run) elementOf(display computeruse.Action) *recordedElement {
+	if at, pointer := target(display); pointer {
+		if e, err := r.elementAt(at); err == nil {
+			// The application comes from the window the action lands on, so
+			// an action in a second visible window records its own window,
+			// not the one the turn started in.
+			return r.recordElement(e, &at, r.driver.WindowAt(at).App)
 		}
-		logAction(r.timeline, index, describeAction(action))
-		result := r.runAction(ctx, action, seen.toFull, &seen, limit)
-		results = append(results, result)
-		if result.Failed() {
-			failed = true
-			logAction(r.timeline, index, "  failed: "+result.Error)
-			continue
-		}
-		if display, ok := toDisplay(action, seen); ok {
-			recorded = append(recorded, recordAction(display, seen.full))
+		return nil
+	}
+	switch display.Kind {
+	case computeruse.KindType, computeruse.KindKey, computeruse.KindHoldKey:
+		if e, err := r.focusedElement(); err == nil {
+			return r.recordElement(e, nil, r.driver.FocusedWindow().App)
 		}
 	}
-	return results, recorded
+	return nil
 }
 
 // runAction performs one action. seen is the screen positions refer to; it
@@ -59,6 +80,12 @@ func (r *run) runAction(ctx context.Context, action computeruse.Action, toFull p
 	if action.Point != nil {
 		p := toFull(*action.Point)
 		at = &p
+	}
+	// The step never operates the application that runs it: a keystroke
+	// to a window of its own a person just focused could close it.
+	if own, ok := r.ownWindow(action, at, toFull); ok {
+		result.Error = fmt.Sprintf("%q belongs to the application that runs this step, which it never operates", own.Title)
+		return result
 	}
 	var err error
 	switch action.Kind {
@@ -146,6 +173,48 @@ func (r *run) click(ctx context.Context, action computeruse.Action, at *image.Po
 	return r.driver.Click(ctx, at, button, max(action.Count, 1), modifiers)
 }
 
+// ownWindow reports a window an action would operate that belongs to the
+// application that runs the step. It gathers every window the action
+// reaches: the focused window for keys and typing, the window under the
+// position for pointer actions, the window under the cursor for a button
+// press that moves nothing, every point a drag crosses, and the focused
+// window for any pointer action that holds modifiers, whose key-down
+// reaches the focus wherever the pointer is. It reports the first of those
+// the step owns, so a keystroke or click never reaches the application.
+func (r *run) ownWindow(action computeruse.Action, at *image.Point, toFull positionMapper) (desktop.WindowID, bool) {
+	var windows []desktop.WindowID
+	switch action.Kind {
+	case computeruse.KindType, computeruse.KindKey, computeruse.KindHoldKey:
+		windows = append(windows, r.driver.FocusedWindow())
+	case computeruse.KindClick, computeruse.KindMove, computeruse.KindScroll:
+		if at != nil {
+			windows = append(windows, r.driver.WindowAt(*at))
+		}
+	case computeruse.KindMouseDown, computeruse.KindMouseUp:
+		// A button press acts at the cursor, which the action does not move.
+		if p, err := r.driver.CursorPosition(); err == nil {
+			windows = append(windows, r.driver.WindowAt(p))
+		}
+	case computeruse.KindDrag:
+		for _, p := range action.Path {
+			windows = append(windows, r.driver.WindowAt(toFull(p)))
+		}
+	default:
+		return desktop.WindowID{}, false
+	}
+	// A pointer action that holds modifiers sends key-downs to the focused
+	// window wherever the pointer is; a button press sends none.
+	if len(action.Modifiers) > 0 && action.Kind != computeruse.KindMouseDown && action.Kind != computeruse.KindMouseUp {
+		windows = append(windows, r.driver.FocusedWindow())
+	}
+	for _, window := range windows {
+		if r.driver.Owned(window) {
+			return window, true
+		}
+	}
+	return desktop.WindowID{}, false
+}
+
 // snapshot captures the screen, or a region of it, scaled to the model's
 // limit.
 func (r *run) snapshot(ctx context.Context, limit computeruse.ImageLimit, region *image.Rectangle) (*llmpkg.Image, error) {
@@ -174,14 +243,18 @@ func (r *run) substitute(text string) string {
 }
 
 // toDisplay returns a completed action in display pixels, or false for
-// actions that only read the screen and need no replay.
-func toDisplay(action computeruse.Action, seen screen) (computeruse.Action, bool) {
+// actions that only read the screen and need no replay. Typed text equal
+// to a variable's value is kept as its placeholder.
+func (r *run) toDisplay(action computeruse.Action, seen screen) (computeruse.Action, bool) {
 	switch action.Kind {
 	case computeruse.KindScreenshot, computeruse.KindZoom, computeruse.KindCursorPosition:
 		return computeruse.Action{}, false
 	}
 	display := action
 	display.CallID = ""
+	if action.Kind == computeruse.KindType {
+		display.Text = r.placeholder(action.Text)
+	}
 	if action.Point != nil {
 		p := seen.toFull(*action.Point)
 		display.Point = &computeruse.Point{X: p.X, Y: p.Y}

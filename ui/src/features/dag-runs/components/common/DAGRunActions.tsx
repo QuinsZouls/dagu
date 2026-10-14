@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/tooltip';
 import dayjs from '@/lib/dayjs';
 import ActionButton from '@/components/ui/action-button';
-import { Ban, RefreshCw, Square, X } from 'lucide-react';
+import { Ban, CircleStop, RefreshCw, X } from 'lucide-react';
 import React from 'react';
 import { components, Status } from '../../../../api/v1/schema';
 import { useConfig } from '../../../../contexts/ConfigContext';
@@ -53,6 +53,12 @@ type Props = {
   displayMode?: 'compact' | 'full';
   /** Whether this is a root level dagRun (controls availability of retry/stop actions) */
   isRootLevel?: boolean;
+  /**
+   * Hide actions that do not apply to the run's current state instead of
+   * disabling them. A sub-run still shows Retry, disabled, so its tooltip
+   * can point to the top-level run.
+   */
+  hideUnavailable?: boolean;
 };
 
 /**
@@ -64,6 +70,7 @@ function DAGRunActions({
   refresh,
   displayMode = 'compact',
   isRootLevel = true,
+  hideUnavailable = false,
 }: Props) {
   const { ts } = useI18n();
   const remoteNode = useRemoteNode();
@@ -158,12 +165,9 @@ function DAGRunActions({
   const terminateDetails = getDAGRunTerminateActionDetails(dagRun, {
     isRootLevel,
     copy: {
-      stopConfirmText: ts('Do you really want to stop the dag-run "{name}"?', {
-        name: dagRun?.name ?? name,
-      }),
+      stopConfirmText: ts('Running steps are canceled.'),
       cancelConfirmText: ts(
-        'Do you really want to cancel auto-retry for the dag-run "{name}"?',
-        { name: dagRun?.name ?? name }
+        'The failed run will not be retried automatically.'
       ),
     },
   });
@@ -197,7 +201,9 @@ function DAGRunActions({
         className={`flex items-center ${displayMode === 'compact' ? 'space-x-1' : 'space-x-2'}`}
       >
         {/* Stop / Reject Button */}
-        {isWaiting && hasWaitingApprovals ? (
+        {hideUnavailable &&
+        !buttonState.terminate &&
+        !buttonState.reject ? null : isWaiting && hasWaitingApprovals ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span>
@@ -214,7 +220,7 @@ function DAGRunActions({
             </TooltipTrigger>
             <TooltipContent>
               <p>
-                <I18nText text={'Reject DAG run'} />
+                <I18nText text={'Reject this run'} />
               </p>
             </TooltipContent>
           </Tooltip>
@@ -228,7 +234,7 @@ function DAGRunActions({
                     terminateAction === 'cancel' ? (
                       <X className="h-4 w-4" />
                     ) : (
-                      <Square className="h-4 w-4" />
+                      <CircleStop className="h-4 w-4" />
                     )
                   }
                   disabled={!buttonState['terminate']}
@@ -246,65 +252,75 @@ function DAGRunActions({
         )}
 
         {/* Retry Button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <ActionButton
-                label={displayMode !== 'compact'}
-                icon={<RefreshCw className="h-4 w-4" />}
-                disabled={!buttonState['retry']}
-                onClick={() => setIsRetryModal(true)}
-                className="cursor-pointer"
-              >
-                <I18nText text={'Retry'} />
-              </ActionButton>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>
-              {isRootLevel ? (
-                <I18nText text={'Retry DAGRun execution'} />
-              ) : (
-                <I18nText
-                  text={'Retry action only available at root dagRun level'}
-                />
-              )}
-            </p>
-          </TooltipContent>
-        </Tooltip>
+        {(!hideUnavailable || buttonState.retry || !isRootLevel) && (
+          <Tooltip>
+            {/* On a sub-run the disabled button cannot take focus, so the
+                wrapper does, letting keyboard users read why. */}
+            <TooltipTrigger asChild>
+              <span tabIndex={isRootLevel ? undefined : 0}>
+                <ActionButton
+                  label={displayMode !== 'compact'}
+                  icon={<RefreshCw className="h-4 w-4" />}
+                  disabled={!buttonState['retry']}
+                  onClick={() => setIsRetryModal(true)}
+                  className="cursor-pointer"
+                >
+                  <I18nText text={'Retry'} />
+                </ActionButton>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>
+                {isRootLevel ? (
+                  <I18nText text={'Retry this run'} />
+                ) : (
+                  <I18nText
+                    text={'Retry is only available on the top-level run'}
+                  />
+                )}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         {/* Dequeue Button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <ActionButton
-                label={displayMode !== 'compact'}
-                icon={<X className="h-4 w-4" />}
-                disabled={!buttonState['dequeue']}
-                onClick={() => setIsDequeueModal(true)}
-                className="cursor-pointer"
-              >
-                <I18nText text={'Dequeue'} />
-              </ActionButton>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>
-              {isRootLevel ? (
-                <I18nText text={'Remove DAGRun from queue'} />
-              ) : (
-                <I18nText
-                  text={'Dequeue action only available at root dagRun level'}
-                />
-              )}
-            </p>
-          </TooltipContent>
-        </Tooltip>
+        {(!hideUnavailable || buttonState.dequeue) && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <ActionButton
+                  label={displayMode !== 'compact'}
+                  icon={<X className="h-4 w-4" />}
+                  disabled={!buttonState['dequeue']}
+                  onClick={() => setIsDequeueModal(true)}
+                  className="cursor-pointer"
+                >
+                  <I18nText text={'Dequeue'} />
+                </ActionButton>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>
+                {isRootLevel ? (
+                  <I18nText text={'Remove this run from the queue'} />
+                ) : (
+                  <I18nText
+                    text={'Dequeue is only available on the top-level run'}
+                  />
+                )}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         {/* Stop Confirmation Modal */}
         <I18nProps>
           <ConfirmModal
-            title="Confirmation"
+            title={
+              terminateAction === 'cancel'
+                ? 'Cancel auto-retry?'
+                : 'Stop this run?'
+            }
             buttonText={ts(terminateDetails.buttonText)}
             visible={isStopModal}
             dismissModal={() => setIsStopModal(false)}
@@ -343,7 +359,7 @@ function DAGRunActions({
         {/* Retry Confirmation Modal */}
         <I18nProps>
           <ConfirmModal
-            title={retryAsNew ? 'Reschedule DAG Run' : 'Confirmation'}
+            title={retryAsNew ? 'Reschedule as a new run?' : 'Retry this run?'}
             buttonText={retryAsNew ? 'Reschedule' : 'Retry'}
             visible={isRetryModal}
             dismissModal={() => {
@@ -420,11 +436,6 @@ function DAGRunActions({
           >
             {/* Modal content structure */}
             <div className="space-y-3">
-              <p className="mb-2">
-                <I18nText
-                  text={'Do you really want to retry the following execution?'}
-                />
-              </p>
               {!retryAsNew && hasManagedAgentSession && (
                 <p className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
                   <I18nText
@@ -435,14 +446,14 @@ function DAGRunActions({
                 </p>
               )}
               <I18nProps>
-                <LabeledItem label="DAGRun-Name">
+                <LabeledItem label="Workflow">
                   <span className="font-mono text-sm">
                     {dagRun?.name || 'N/A'}
                   </span>
                 </LabeledItem>
               </I18nProps>
               <I18nProps>
-                <LabeledItem label="DAGRun-ID">
+                <LabeledItem label="Run ID">
                   <span className="font-mono text-sm">
                     {dagRun?.dagRunId || 'N/A'}
                   </span>
@@ -478,7 +489,7 @@ function DAGRunActions({
                   className="border-border"
                 />
                 <Label htmlFor="reschedule" className="cursor-pointer text-sm">
-                  <I18nText text={'Reschedule with new DAG-run'} />
+                  <I18nText text={'Reschedule as a new run'} />
                 </Label>
               </div>
 
@@ -487,7 +498,7 @@ function DAGRunActions({
                 <div className="space-y-3 pt-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="new-dagrun-id" className="text-sm">
-                      <I18nText text={'New DAG-Run ID (optional)'} />
+                      <I18nText text={'New run ID (optional)'} />
                     </Label>
                     <I18nProps>
                       <Input
@@ -590,7 +601,7 @@ function DAGRunActions({
         {/* Dequeue Confirmation Modal */}
         <I18nProps>
           <ConfirmModal
-            title="Confirmation"
+            title="Remove this run from the queue?"
             buttonText="Dequeue"
             visible={isDequeueModal}
             dismissModal={() => setIsDequeueModal(false)}
@@ -623,20 +634,15 @@ function DAGRunActions({
             }}
           >
             <div>
-              <p className="mb-2">
-                <I18nText
-                  text={'Do you really want to dequeue the following dagRun?'}
-                />
-              </p>
               <I18nProps>
-                <LabeledItem label="DAGRun-Name">
+                <LabeledItem label="Workflow">
                   <span className="font-mono text-sm">
                     {dagRun?.name || 'N/A'}
                   </span>
                 </LabeledItem>
               </I18nProps>
               <I18nProps>
-                <LabeledItem label="DAGRun-ID">
+                <LabeledItem label="Run ID">
                   <span className="font-mono text-sm">
                     {dagRun?.dagRunId || 'N/A'}
                   </span>

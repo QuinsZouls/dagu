@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '@/contexts/ConfigContext';
 import { AppBarContext } from '@/contexts/AppBarContext';
 import App from '../App';
+import userEvent from '@testing-library/user-event';
 
 const { clientMock, clientGetMock, overviewImportError, useQueryMock } =
   vi.hoisted(() => {
@@ -196,7 +197,9 @@ beforeEach(() => {
   clientGetMock.mockReset();
   clientGetMock.mockResolvedValue({ data: { workspaces: [] } });
   useQueryMock.mockReset();
-  useQueryMock.mockReturnValue({ data: undefined });
+  useQueryMock.mockImplementation((_path, _params, options) => ({
+    data: options?.fallbackData,
+  }));
   overviewImportError.current = false;
   vi.stubGlobal(
     'fetch',

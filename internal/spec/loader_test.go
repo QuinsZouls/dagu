@@ -2935,6 +2935,34 @@ steps:
 	})
 }
 
+// TestLoadYAMLCase verifies configured DAG directory lookup preserves mixed-case YAML filenames.
+func TestLoadYAMLCase(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		file string
+		dag  string
+	}{
+		{name: "YAML", file: "FLOW.YAML", dag: "authored-yaml"},
+		{name: "Yml", file: "flow.Yml", dag: "authored-yml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dagsDir := t.TempDir()
+			path := filepath.Join(dagsDir, tc.file)
+			require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf("name: %s\nsteps: []\n", tc.dag)), 0600))
+
+			dag, err := spec.Load(context.Background(), tc.file, spec.WithDAGsDir(dagsDir))
+			require.NoError(t, err)
+			require.NotNil(t, dag)
+			assert.Equal(t, tc.dag, dag.Name)
+			assert.Equal(t, path, dag.Location)
+		})
+	}
+}
+
 // TestLoadWithoutEval tests the WithoutEval loader option
 // This test cannot be parallel because it uses t.Setenv
 func TestLoadWithoutEval(t *testing.T) {

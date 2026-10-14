@@ -90,7 +90,7 @@ func (r *run) resumeSession(ctx context.Context, recordID string, session *ir.Ag
 	r.refreshMasker()
 
 	if name := record.Profile; name != "" {
-		lease, err := acquireProfile(ctx, r.browser, name, r.store, recordID)
+		lease, err := acquireProfile(ctx, r.browser, name, recordID, true)
 		if err != nil {
 			return 0, err
 		}
@@ -101,15 +101,12 @@ func (r *run) resumeSession(ctx context.Context, recordID string, session *ir.Ag
 		AllowedDomains: r.cfg.Browser.AllowedDomains,
 		Generate:       r.bridge.generate,
 	}
-	eng, err := r.exec.launcher.Reattach(ctx, browserHandle{
-		CDPURL:       record.CDPURL,
-		ExtensionID:  record.ExtensionID,
-		ExtensionDir: record.ExtensionDir,
-	}, opts)
+	eng, err := r.exec.launcher.Reattach(ctx, recordedHandle(record), opts)
 	if err != nil {
 		return 0, err
 	}
 	r.eng = eng
+	r.certificateProxy = record.CertProxyURL != ""
 	if err := r.saveRunningRecord(); err != nil {
 		return 0, err
 	}

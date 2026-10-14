@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Yota Hamada
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -112,7 +113,9 @@ function renderPage({ apiKeys }: { apiKeys: APIKey[] }) {
   render(
     <ConfigContext.Provider value={makeConfig()}>
       <AppBarContext.Provider value={appBarValue}>
-        <APIKeysPage />
+        <MemoryRouter>
+          <APIKeysPage />
+        </MemoryRouter>
       </AppBarContext.Provider>
     </ConfigContext.Provider>
   );
@@ -242,7 +245,7 @@ describe('APIKeyFormModal', () => {
     if (!mcpSurface) {
       fireEvent.click(screen.getByRole('checkbox', { name: 'MCP' }));
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Create Key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
     await screen.findByText('API Key Created');
   }
 

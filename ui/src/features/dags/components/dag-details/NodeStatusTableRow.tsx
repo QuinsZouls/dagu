@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { CommandDisplay } from '@/components/ui/command-display';
 import { useErrorModal } from '@/components/ui/error-modal';
 import { useSimpleToast } from '@/components/ui/simple-toast';
+import RelativeTime from '@/components/ui/relative-time';
 import { ScriptBadge } from '@/components/ui/script-dialog';
 import { TableCell } from '@/components/ui/table';
 import {
@@ -28,7 +29,6 @@ import {
 } from '@/lib/executor-utils';
 import { isHarnessStep } from '@/lib/harness-step';
 import { isActiveNodeStatus } from '@/lib/status-utils';
-import dayjs from '@/lib/dayjs';
 import { cn } from '@/lib/utils';
 import {
   Dialog,
@@ -173,18 +173,6 @@ function BuildDecisionBadge({
 }
 
 /**
- * Format timestamp for better readability
- */
-const formatTimestamp = (timestamp: string | undefined) => {
-  if (!timestamp || timestamp == '-') return '-';
-  try {
-    return dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss Z');
-  } catch {
-    return timestamp;
-  }
-};
-
-/**
  * Calculate duration between two timestamps
  * If endTime is not provided, calculate duration from startTime to now (for running tasks)
  */
@@ -243,9 +231,7 @@ function ManualActionDetails({
             className="text-info"
           />
           {node.finishedAt && (
-            <span className="ml-1">
-              <I18nText text={'at'} /> {formatTimestamp(node.finishedAt)}
-            </span>
+            <RelativeTime className="ml-1" timestamp={node.finishedAt} />
           )}
         </div>
       ) : null}
@@ -260,9 +246,7 @@ function ManualActionDetails({
             className="text-info"
           />
           {node.approvedAt && (
-            <span className="ml-1">
-              <I18nText text={'at'} /> {formatTimestamp(node.approvedAt)}
-            </span>
+            <RelativeTime className="ml-1" timestamp={node.approvedAt} />
           )}
         </div>
       ) : null}
@@ -290,9 +274,7 @@ function ManualActionDetails({
             className="text-error"
           />
           {node.rejectedAt && (
-            <span className="ml-1">
-              <I18nText text={'at'} /> {formatTimestamp(node.rejectedAt)}
-            </span>
+            <RelativeTime className="ml-1" timestamp={node.rejectedAt} />
           )}
         </div>
       ) : null}
@@ -880,6 +862,7 @@ function NodeStatusTableRow({
             <div className="flex items-center justify-center gap-2">
               {hasLogs && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsLogExpanded(!isLogExpanded);
@@ -888,6 +871,8 @@ function NodeStatusTableRow({
                     }
                   }}
                   className="text-muted-foreground hover:text-foreground/90"
+                  aria-expanded={isLogExpanded}
+                  aria-label={ts(isLogExpanded ? 'Hide logs' : 'Show logs')}
                 >
                   {isLogExpanded ? (
                     <ChevronDown className="h-4 w-4" />
@@ -996,7 +981,7 @@ function NodeStatusTableRow({
 
           {/* Combined Command & Args */}
           <TableCell>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               {isHarnessStep(node.step) ? (
                 <HarnessStepSummary step={node.step} />
               ) : logStepDisplayMessage !== null ? (
@@ -1041,7 +1026,7 @@ function NodeStatusTableRow({
           <TableCell>
             <div className="space-y-0.5">
               <div className="font-medium text-foreground/90 text-sm">
-                {formatTimestamp(node.startedAt)}
+                <RelativeTime timestamp={node.startedAt} />
               </div>
               {node.startedAt && (
                 <div className="text-xs text-muted-foreground flex items-center gap-1.5 leading-tight">
@@ -1161,7 +1146,10 @@ function NodeStatusTableRow({
 
               {/* Errors - Simplified */}
               {node.error && (
-                <div className="text-xs text-error leading-relaxed whitespace-normal break-words">
+                <div
+                  className="line-clamp-3 text-xs leading-relaxed whitespace-pre-wrap break-words text-error"
+                  title={node.error}
+                >
                   {node.error}
                 </div>
               )}
@@ -1264,6 +1252,7 @@ function NodeStatusTableRow({
                   stepName={node.step.name}
                   stream={currentStream}
                   dagRun={dagRun}
+                  live={isActiveNode}
                 />
               </div>
             </TableCell>
@@ -1283,21 +1272,21 @@ function NodeStatusTableRow({
 
   // Render mobile view (card)
   return (
-    <div className="p-4 rounded-2xl border border-border bg-card">
+    <div className="p-4 rounded-lg border border-border bg-card">
       {/* Header with number and status */}
       <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-foreground/90 text-sm bg-muted rounded-full w-6 h-6 flex items-center justify-center">
             {rownum}
           </span>
-          <h3 className="font-semibold text-foreground">
+          <p className="font-semibold text-foreground">
             {node.step.name}
             {hasSubDAGRun && (
               <span className="inline-flex items-center text-primary ml-1.5">
                 <GitBranch className="h-4 w-4" />
               </span>
             )}
-          </h3>
+          </p>
         </div>
         <div className="flex items-center gap-1">
           <NodeStatusChip status={node.status} size="sm">
@@ -1425,7 +1414,8 @@ function NodeStatusTableRow({
         </div>
         <div className="space-y-0.5">
           <div className="text-xs text-muted-foreground">
-            <I18nText text={'Started:'} /> {formatTimestamp(node.startedAt)}
+            <I18nText text={'Started:'} />{' '}
+            <RelativeTime timestamp={node.startedAt} />
           </div>
           {node.startedAt && (
             <div className="text-xs text-muted-foreground flex items-center gap-1.5">

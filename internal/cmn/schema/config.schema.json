@@ -967,7 +967,7 @@
       "properties": {
         "log_encoding_charset": {
           "type": "string",
-          "description": "Character encoding for log display."
+          "description": "Character encoding for log lines that are not valid UTF-8."
         },
         "navbar_color": {
           "type": "string",
@@ -1137,6 +1137,51 @@
           "type": "boolean",
           "description": "Keep Chromium's sandbox on for every browser started on this host. Set to false only where the sandbox cannot start; pages are then isolated from the host only by the operating system user.",
           "default": true
+        },
+        "guard_client_certificates": {
+          "type": "boolean",
+          "description": "Send a browser's other HTTPS requests through the certificate proxy too, so the browser never asks the operating system for a client certificate; a site that asks for one gets none and the step says so. Defaults to on whenever the browser presents client certificates."
+        },
+        "client_certificates": {
+          "type": "array",
+          "description": "TLS client certificates every browser started on this host presents to the hosts each names, after those a step names. The first entry whose hosts match is used.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hosts"],
+            "properties": {
+              "hosts": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Hosts the certificate is presented to: a host name or IP address, *.example.com for the subdomains of example.com, or * for every host."
+              },
+              "pfx_file": {
+                "type": "string",
+                "description": "PKCS#12 (.pfx or .p12) file holding the certificate, its private key, and optionally its chain."
+              },
+              "cert_file": {
+                "type": "string",
+                "description": "PEM certificate, followed by its chain. Used with key_file instead of pfx_file."
+              },
+              "key_file": {
+                "type": "string",
+                "description": "Unencrypted PEM private key for cert_file."
+              },
+              "ca_file": {
+                "type": "string",
+                "description": "PEM certificates to trust for these hosts' servers, in addition to the system's."
+              },
+              "passphrase": {
+                "type": "string",
+                "description": "Passphrase of pfx_file."
+              },
+              "passphrase_file": {
+                "type": "string",
+                "description": "File holding the passphrase of pfx_file."
+              }
+            }
+          }
         }
       }
     },
@@ -1158,6 +1203,10 @@
           "description": "Worker HTTP health check port. Default: 8092. Set to 0 to disable.",
           "minimum": 0,
           "maximum": 65535
+        },
+        "shutdown_timeout": {
+          "type": "string",
+          "description": "How long a worker stopping on SIGINT or SIGTERM drains running DAG runs before it cancels them. Default: '60s'. Set to '0' to wait without a bound. Set the supervisor's stop timeout at least 15s above this value (systemd TimeoutStopSec defaults to 90s, docker stop to 10s, Kubernetes terminationGracePeriodSeconds to 30s)."
         },
         "labels": {
           "oneOf": [

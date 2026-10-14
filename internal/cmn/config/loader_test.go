@@ -349,9 +349,10 @@ func TestLoad_Env(t *testing.T) {
 			HealthPort: 50101,
 		},
 		Worker: Worker{
-			ID:            "test-worker-123",
-			MaxActiveRuns: 200,
-			HealthPort:    50102,
+			ID:              "test-worker-123",
+			MaxActiveRuns:   200,
+			HealthPort:      50102,
+			ShutdownTimeout: 60 * time.Second,
 			PostgresPool: PostgresPoolConfig{
 				MaxOpenConns:    25,
 				MaxIdleConns:    5,
@@ -428,6 +429,55 @@ worker:
 
 	assert.Zero(t, cfg.Coordinator.HealthPort)
 	assert.Zero(t, cfg.Worker.HealthPort)
+}
+
+func TestLoad_WorkerShutdownTimeout(t *testing.T) {
+	t.Run("Default", func(t *testing.T) {
+		cfg := loadFromYAML(t, "# empty")
+		assert.Equal(t, 60*time.Second, cfg.Worker.ShutdownTimeout)
+	})
+
+	t.Run("FromYAML", func(t *testing.T) {
+		cfg := loadFromYAML(t, `
+worker:
+  shutdown_timeout: 5m
+`)
+		assert.Equal(t, 5*time.Minute, cfg.Worker.ShutdownTimeout)
+	})
+
+	t.Run("ZeroDisablesBound", func(t *testing.T) {
+		cfg := loadFromYAML(t, `
+worker:
+  shutdown_timeout: 0
+`)
+		assert.Zero(t, cfg.Worker.ShutdownTimeout)
+	})
+
+	t.Run("FromEnv", func(t *testing.T) {
+		cfg := loadWithEnv(t, "# empty", map[string]string{
+			"DAGU_WORKER_SHUTDOWN_TIMEOUT": "45s",
+		})
+		assert.Equal(t, 45*time.Second, cfg.Worker.ShutdownTimeout)
+	})
+
+	t.Run("InvalidFallsBackToDefault", func(t *testing.T) {
+		cfg := loadFromYAML(t, `
+worker:
+  shutdown_timeout: soon
+`)
+		assert.Equal(t, 60*time.Second, cfg.Worker.ShutdownTimeout)
+		require.NotEmpty(t, cfg.Warnings)
+		assert.Contains(t, cfg.Warnings[len(cfg.Warnings)-1], "Invalid worker.shutdown_timeout value: soon")
+	})
+
+	t.Run("NegativeIsRejected", func(t *testing.T) {
+		err := loadWithErrorFromYAML(t, `
+worker:
+  shutdown_timeout: -1s
+`)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "worker.shutdown_timeout must be >= 0")
+	})
 }
 
 func TestLoad_WithAppHomeDir(t *testing.T) {
@@ -588,6 +638,67 @@ func TestLoad_BrowserSandbox(t *testing.T) {
 func TestLoad_BrowserSandboxFromEnv(t *testing.T) {
 	t.Setenv("DAGU_BROWSER_SANDBOX", "false")
 	require.True(t, testLoad(t).Browser.NoSandbox)
+}
+
+func TestLoad_BrowserClientCertificates(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+browser:
+  client_certificates:
+    - hosts: [portal.example.com, "*.corp.example"]
+      pfx_file: `+filepath.Join(dir, "client.p12")+`
+      passphrase_file: `+filepath.Join(dir, "client.passphrase")+`
+    - hosts: ["*"]
+      cert_file: `+filepath.Join(dir, "client.pem")+`
+      key_file: `+filepath.Join(dir, "client.key")+`
+      ca_file: `+filepath.Join(dir, "ca.pem")+`
+`), 0o600))
+
+	cfg := testLoad(t, WithConfigFile(configFile))
+	require.Equal(t, []BrowserClientCertificate{
+		{
+			Hosts:          []string{"portal.example.com", "*.corp.example"},
+			PFXFile:        filepath.Join(dir, "client.p12"),
+			PassphraseFile: filepath.Join(dir, "client.passphrase"),
+		},
+		{
+			Hosts:    []string{"*"},
+			CertFile: filepath.Join(dir, "client.pem"),
+			KeyFile:  filepath.Join(dir, "client.key"),
+			CAFile:   filepath.Join(dir, "ca.pem"),
+		},
+	}, cfg.Browser.ClientCertificates)
+}
+
+// The certificate guard follows the browser's certificates unless the
+// config file or the environment turns it on or off.
+func TestLoad_BrowserGuardClientCertificates(t *testing.T) {
+	require.Nil(t, testLoad(t).Browser.GuardClientCertificates, "unset, the guard follows the certificates")
+
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("browser:\n  guard_client_certificates: false\n"), 0o600))
+	guard := testLoad(t, WithConfigFile(configFile)).Browser.GuardClientCertificates
+	require.NotNil(t, guard)
+	require.False(t, *guard)
+
+	t.Setenv("DAGU_BROWSER_GUARD_CLIENT_CERTIFICATES", "true")
+	guard = testLoad(t).Browser.GuardClientCertificates
+	require.NotNil(t, guard)
+	require.True(t, *guard)
+}
+
+func TestLoad_BrowserClientCertificatesRejectsMalformed(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+browser:
+  client_certificates:
+    - hosts: [portal.example.com]
+      cert_file: /tmp/client.pem
+`), 0o600))
+
+	err := testLoadWithError(t, WithConfigFile(configFile))
+	require.ErrorContains(t, err, "browser.client_certificates[0]: set pfx_file, or cert_file and key_file")
 }
 
 func TestLoad_OpenCodeRejectsReservedPassthrough(t *testing.T) {
@@ -856,9 +967,10 @@ scheduler:
 			HealthPort: 8091,
 		},
 		Worker: Worker{
-			ID:            "worker-1",
-			MaxActiveRuns: 50,
-			HealthPort:    8092,
+			ID:              "worker-1",
+			MaxActiveRuns:   50,
+			HealthPort:      8092,
+			ShutdownTimeout: 60 * time.Second,
 			Labels: map[string]string{
 				"env":    "production",
 				"region": "us-west-2",

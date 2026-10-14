@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dagucloud/dagu/v2/internal/desktop"
@@ -23,12 +25,41 @@ const continueNote = "Continue the task. " + computeruse.DoneInstruction
 // personNote tells a model why its actions were not run.
 const personNote = "A person used the computer after your last screenshot, so your last actions were not run. Continue the task from the current screen."
 
+// divergedNote tells a model its actions were not run because the screen
+// changed after the screenshot it chose them on, such as a window that came
+// to the front or a dialog that appeared.
+const divergedNote = "The screen changed after the screenshot you chose your actions on, so they were not run. Look at this screen and continue the task from here."
+
+// repeatNote tells a model that its last round repeated the one before it
+// and changed nothing on the screen.
+const repeatNote = "You repeated your previous round of actions, and the screen looks the same as it did before them. Repeating them again will not help. If the task is already complete, report done; otherwise take a different approach."
+
+// capNote tells a model that the task has no actions left, and asks for its
+// report instead of its next actions.
+const capNote = "This task has used all the actions it may take, so your last actions were not run. Do not act again. If the task is complete, report done with success; otherwise report done with success set to false and say what is left."
+
+// verifyNote asks a model that reported the task done in the same turn as
+// actions to look at what they did before the report is accepted.
+const verifyNote = "Your actions ran and you reported the task done, but you have not seen the result yet. Look at this screen. If the task is complete, report done again without any action; otherwise continue the task."
+
 // actOutcome is what a model-driven act did.
 type actOutcome struct {
 	summary   string
 	actions   int
 	recording recording
 }
+
+// replayMiss is the failure of an act that may not call the model: its
+// recording is missing or no longer fits the screen. The recording is kept
+// for a run that lets the model repair it.
+type replayMiss struct {
+	err error
+	// via is how the replay ran before it missed.
+	via string
+}
+
+func (m replayMiss) Error() string { return "the act cannot run without AI: " + m.err.Error() }
+func (m replayMiss) Unwrap() error { return m.err }
 
 func (r *run) act(ctx context.Context, index int, spec actSpec, timeout time.Duration) error {
 	// Validation guarantees every reference names a variable or an earlier
@@ -38,35 +69,104 @@ func (r *run) act(ctx context.Context, index int, spec actSpec, timeout time.Dur
 			return fmt.Errorf("the instruction uses %%%s%%, but the ask that sets it did not run", name)
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := r.operationContext(ctx, timeout)
 	defer cancel()
 	began, before := time.Now(), r.usage
 
-	useCache := r.cache != nil && (spec.Cache == nil || *spec.Cache)
+	choice := r.cfg.actChoice(spec)
 	status := agentstep.StatusCompleted
 	key := ""
 	// replayed holds the recorded turns a partial replay completed, which
 	// the healed recording keeps, and spent the actions it performed.
 	var replayed []recordedTurn
 	spent := 0
-	if useCache {
-		current, err := r.settle(ctx)
-		if err != nil {
-			return err
+	pinned := false
+	// A pinned act runs its authored steps first on every device of its
+	// system, ahead of this device's own recording.
+	if choice != aiEveryRun {
+		if steps := spec.Recorded[r.system]; len(steps) > 0 {
+			pinned = true
+			// A pinned step's placeholders, like the instruction's, must
+			// have a value; a missing one means its ask was skipped.
+			for _, step := range steps {
+				for _, name := range step.references() {
+					if _, ok := r.variables[name]; !ok {
+						return fmt.Errorf("a pinned step uses %%%s%%, but the ask that sets it did not run", name)
+					}
+				}
+			}
+			findWithin, err := r.cfg.findWithin(spec, r.exec.findWithin)
+			if err != nil {
+				return err
+			}
+			direct, err := r.cfg.direct(spec)
+			if err != nil {
+				return err
+			}
+			outcome, err := r.replayPinned(ctx, index, steps, direct, findWithin)
+			if err != nil {
+				return err
+			}
+			if outcome.done {
+				r.report(ctx, agentstep.Report{
+					Index: index, Kind: opAct, Subject: spec.Instruction, Status: agentstep.StatusCacheHit, Via: agentstep.ViaElement,
+					Detail: fmt.Sprintf("replayed %d pinned steps", len(steps)), Duration: time.Since(began),
+				})
+				return nil
+			}
+			if choice == aiNever {
+				return replayMiss{err: errors.New(outcome.reason), via: agentstep.ViaElement}
+			}
+			logAction(r.timeline, index, "pinned steps stopped: "+outcome.reason)
+			status = agentstep.StatusHealed
+			replayed, spent = outcome.ran, outcome.performed
 		}
-		key = replayKey(index, spec.Instruction, current.Bounds().Size())
-		if entry, ok := r.cache.Lookup(key); ok && len(entry.Turns) > 0 {
-			replay, err := r.replay(ctx, index, entry, r.cfg.maxActions(spec))
+	}
+	if !pinned && choice != aiEveryRun {
+		key = replayKey(index, spec.Instruction)
+		entry, ok := r.cache.Lookup(key)
+		switch {
+		case !ok || len(entry.Turns) == 0:
+			if choice == aiNever {
+				return replayMiss{err: errors.New("there is no recording of it on this host"), via: agentstep.ViaScreen}
+			}
+		case entry.Version != recordingVersion:
+			// An older recording is ignored once; what this run records
+			// replaces it.
+			r.cache.Drop(key)
+			if choice == aiNever {
+				return replayMiss{err: errors.New("its recording on this host is from an older version and was ignored"), via: agentstep.ViaScreen}
+			}
+		default:
+			findWithin, err := r.cfg.findWithin(spec, r.exec.findWithin)
+			if err != nil {
+				return err
+			}
+			direct, err := r.cfg.direct(spec)
+			if err != nil {
+				return err
+			}
+			replay, err := r.replay(ctx, index, entry, r.cfg.maxActions(spec), findWithin, direct)
 			if err != nil {
 				return err
 			}
 			if replay.complete {
+				// A recording made before recordings knew their position is
+				// written back with it, so it can be forgotten on its own.
+				if entry.Op != index {
+					entry.Op = index
+					r.cache.Stage(key, entry)
+				}
 				r.report(ctx, agentstep.Report{
-					Index: index, Kind: opAct, Subject: spec.Instruction, Status: agentstep.StatusCacheHit,
+					Index: index, Kind: opAct, Subject: spec.Instruction, Status: agentstep.StatusCacheHit, Via: replay.via(),
 					Detail: fmt.Sprintf("replayed %d turns", len(entry.Turns)), Duration: time.Since(began),
 				})
 				return nil
 			}
+			if choice == aiNever {
+				return replayMiss{err: errors.New(replay.reason), via: replay.via()}
+			}
+			logAction(r.timeline, index, "replay stopped: "+replay.reason)
 			status = agentstep.StatusHealed
 			// The recording is dropped unless the act that heals it records
 			// what it did.
@@ -83,11 +183,17 @@ func (r *run) act(ctx context.Context, index int, spec actSpec, timeout time.Dur
 		return err
 	}
 	outcome.recording.Turns = append(slices.Clone(replayed), outcome.recording.Turns...)
-	if useCache && len(outcome.recording.Turns) > 0 {
+	outcome.recording.Op = index
+	// A successful act records under every choice, so a later switch to
+	// replaying starts with a recording.
+	if len(outcome.recording.Turns) > 0 {
+		if key == "" {
+			key = replayKey(index, spec.Instruction)
+		}
 		r.cache.Stage(key, outcome.recording)
 	}
 	r.report(ctx, agentstep.Report{
-		Index: index, Kind: opAct, Subject: spec.Instruction, Status: status,
+		Index: index, Kind: opAct, Subject: spec.Instruction, Status: status, Via: agentstep.ViaModel,
 		Detail:   fmt.Sprintf("%s (%d actions)", outcome.summary, outcome.actions),
 		Tokens:   r.usage.sub(before).total(),
 		Duration: time.Since(began),
@@ -97,15 +203,18 @@ func (r *run) act(ctx context.Context, index int, spec actSpec, timeout time.Dur
 
 // drive runs the task with the models in order, after spent actions a
 // replay performed. A later model takes over only when an earlier one failed
-// before touching the desktop.
+// before touching the desktop, not when a person kept using it.
 func (r *run) drive(ctx context.Context, index int, spec actSpec, spent int) (actOutcome, error) {
+	if len(r.models) == 0 {
+		return actOutcome{}, errors.New("no model is configured")
+	}
 	var errs []error
 	for _, m := range r.models {
 		outcome, touched, err := r.driveModel(ctx, index, spec, m, spent)
 		if err == nil {
 			return outcome, nil
 		}
-		if touched || ctx.Err() != nil {
+		if touched || ctx.Err() != nil || errors.Is(err, errDesktopInUse) {
 			return actOutcome{}, err
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", m.label(), err))
@@ -142,11 +251,26 @@ type actLoop struct {
 	// over, which count toward budget.
 	spent int
 	// seen is the screen the model last saw.
-	seen     screen
-	outcome  actOutcome
-	touched  bool
+	seen    screen
+	outcome actOutcome
+	touched bool
+	// elements are the elements the act's actions landed on, in order,
+	// from which the recording's landmarks are chosen.
+	elements []recordedElement
+	// choices maps the ids offered to the model this turn to the elements
+	// they name, so click_element resolves to a position.
+	choices  map[string]desktop.Element
 	reminded bool
+	// capped records that the model was told the task has no actions left
+	// and asked for its report.
+	capped bool
+	// lastRound is the previous round of actions, for noticing a repeat.
+	lastRound string
 }
+
+// maxModelElements bounds how many actionable elements an observation
+// offers the model, so a large tree does not bloat the prompt.
+const maxModelElements = 40
 
 // run loops between the model and the desktop until the model reports the
 // task done.
@@ -159,7 +283,7 @@ func (l *actLoop) run(ctx context.Context) error {
 		return err
 	}
 	l.outcome.recording.Width, l.outcome.recording.Height = l.seen.full.Bounds().Dx(), l.seen.full.Bounds().Dy()
-	obs := computeruse.Observation{Screen: l.seen.forModel()}
+	obs := computeruse.Observation{Screen: l.seen.forModel(), Elements: l.offerElements()}
 	for {
 		turn, err := l.session.Next(ctx, obs)
 		if err != nil {
@@ -172,52 +296,253 @@ func (l *actLoop) run(ctx context.Context) error {
 		if turn.Text != "" {
 			logAction(l.r.timeline, l.index, "model: "+agentstep.QuoteShort(turn.Text))
 		}
-		if err := l.admit(turn); err != nil {
+		over, err := l.admit(turn)
+		if err != nil {
 			return err
 		}
-		stale, err := l.stale(ctx, turn)
+		if over {
+			// The task has no actions left. The model is told once, with the
+			// screen, and may still report the task done; one that acts
+			// again instead ends the act.
+			if l.capped {
+				return fmt.Errorf("the task needed more than max_actions (%d) actions", l.budget)
+			}
+			l.capped = true
+			logAction(l.r.timeline, l.index, "the task has used the actions it may take; asking the model to report")
+			if l.seen, err = l.r.observe(ctx, l.limit); err != nil {
+				return err
+			}
+			obs = computeruse.Observation{Screen: l.seen.forModel(), Results: skippedResults(turn.Actions), Note: capNote}
+			continue
+		}
+		// Before running the turn's actions, make sure the world still matches
+		// the screen the model chose them on. A person who used the desktop,
+		// or any other change that moved or covered the target between the
+		// screenshot and now, sends the model a fresh screen instead of acting
+		// on a stale one.
+		runActions, skipNote, err := l.reconcile(ctx, turn)
 		if err != nil {
 			return err
 		}
 		var results []computeruse.Result
-		if stale {
-			logAction(l.r.timeline, l.index, "a person used the desktop; the model's actions were not run")
-			results = skippedResults(turn.Actions)
-		} else {
+		before := desktop.FingerprintOf(l.seen.full)
+		if runActions {
 			results = l.apply(ctx, turn)
+		} else {
+			results = skippedResults(turn.Actions)
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// A model that finishes in the same turn as a failed action has not
-		// seen the failure yet, so it is shown the result first.
-		if turn.Done != nil && !stale && !anyFailed(results) {
+		// A model that finishes in the same turn as actions has not seen
+		// what they did, so it is shown the screen and asked again; one that
+		// finishes beside a failed action likewise sees the failure first. A
+		// report without actions is believed.
+		verify := turn.Done != nil && runActions && !anyFailed(results)
+		if verify && len(turn.Actions) == 0 {
 			return l.finish(ctx, turn)
 		}
 		note, err := l.reminder(turn)
 		if err != nil {
 			return err
 		}
-		if stale {
-			note = personNote
+		if skipNote != "" {
+			note = skipNote
+		}
+		if verify {
+			note = verifyNote
 		}
 		if l.seen, err = l.r.observe(ctx, l.limit); err != nil {
 			return err
+		}
+		// A round that repeats the previous one and leaves the screen as it
+		// was is going nowhere; the model is told before it tries a third
+		// time.
+		if round := describeRound(turn.Actions); runActions && len(turn.Actions) > 0 {
+			if round == l.lastRound && desktop.FingerprintOf(l.seen.full).Distance(before) <= replayScreenDistance {
+				logAction(l.r.timeline, l.index, "the model repeated its previous actions and the screen did not change")
+				if note == "" {
+					note = repeatNote
+				}
+			}
+			l.lastRound = round
 		}
 		obs = computeruse.Observation{
 			Screen:       l.seen.forModel(),
 			Results:      results,
 			Acknowledged: turn.Confirmation != "",
 			Note:         note,
+			Elements:     l.offerElements(),
 		}
 	}
 }
 
-// stale waits until nobody has used the desktop for the idle period and
-// reports whether a person used it after the screenshot the model saw, in
-// which case the turn's actions may no longer fit the screen.
-func (l *actLoop) stale(ctx context.Context, turn *computeruse.Turn) (bool, error) {
-	if len(turn.Actions) == 0 || l.r.cfg.idle() <= 0 {
+// offerElements lists the actionable elements of the front window for the
+// model to target by id, and remembers which element each id names. It is
+// empty when the desktop exposes no elements, so a host without them keeps
+// working by pixels.
+func (l *actLoop) offerElements() []computeruse.Element {
+	l.choices = nil
+	els, err := l.r.elementsIfAvailable()
+	if err != nil {
+		return nil
+	}
+	front, err := els.FrontWindow()
+	if err != nil {
+		return nil
+	}
+	outline, err := els.Outline(front, 0)
+	if err != nil {
+		return nil
+	}
+	var list []computeruse.Element
+	choices := make(map[string]desktop.Element)
+	for _, e := range outline {
+		if !actionableRole(e.Role) || strings.TrimSpace(e.Name) == "" || e.Bounds.Empty() {
+			continue
+		}
+		id := fmt.Sprintf("e%d", len(list)+1)
+		list = append(list, computeruse.Element{ID: id, Role: e.Role, Name: e.Name})
+		choices[id] = e
+		if len(list) >= maxModelElements {
+			break
+		}
+	}
+	l.choices = choices
+	return list
+}
+
+// actionableRole reports whether the model may usefully click an element of
+// this role by id.
+func actionableRole(role string) bool {
+	switch role {
+	case desktop.RoleButton, desktop.RoleTextField, desktop.RoleCheckbox, desktop.RoleRadio,
+		desktop.RoleComboBox, desktop.RoleListItem, desktop.RoleMenuItem, desktop.RoleTab,
+		desktop.RoleLink, desktop.RoleCell:
+		return true
+	}
+	return false
+}
+
+// elementCentre is the centre of an element's bounds, in display pixels.
+func elementCentre(e desktop.Element) image.Point {
+	return image.Pt((e.Bounds.Min.X+e.Bounds.Max.X)/2, (e.Bounds.Min.Y+e.Bounds.Max.Y)/2)
+}
+
+// describeElement names an element for the step log.
+func describeElement(e desktop.Element) string {
+	return fmt.Sprintf("%s %q", e.Role, e.Name)
+}
+
+// elementAction names how a click on an element of a role is best carried
+// out: an invokable control performs its pattern itself, which works wherever
+// the window is and does not depend on a pixel; a text field takes the
+// keyboard focus. It mirrors the role mapping a replay uses under input:
+// direct. Anything else, such as a double or modified click, has no pattern
+// and runs on the screen.
+func elementAction(action computeruse.Action, role string) (pattern desktop.Pattern, focus bool, ok bool) {
+	if !plainClick(action) {
+		return "", false, false
+	}
+	switch role {
+	case desktop.RoleButton, desktop.RoleMenuItem, desktop.RoleLink, desktop.RoleOther:
+		return desktop.PatternInvoke, false, true
+	case desktop.RoleCheckbox:
+		return desktop.PatternToggle, false, true
+	case desktop.RoleRadio, desktop.RoleListItem, desktop.RoleTab, desktop.RoleCell:
+		return desktop.PatternSelect, false, true
+	case desktop.RoleComboBox:
+		return desktop.PatternExpand, false, true
+	case desktop.RoleTextField:
+		return "", true, true
+	}
+	return "", false, false
+}
+
+// invokeElement carries out a click the model aimed at an element through the
+// element itself, rather than a click at a pixel the window may have moved
+// away from or another window may now cover. It reports done=false when the
+// host reads no elements or the element offers no pattern for the action, so
+// the caller clicks the element's position on the screen instead.
+func (l *actLoop) invokeElement(ctx context.Context, els desktop.Elements, action computeruse.Action, e desktop.Element) (done bool, rec *recordedAction, result computeruse.Result) {
+	if els == nil {
+		return false, nil, computeruse.Result{}
+	}
+	pattern, focus, ok := elementAction(action, e.Role)
+	if !ok {
+		return false, nil, computeruse.Result{}
+	}
+	result = computeruse.Result{CallID: action.CallID}
+	if focus {
+		if err := els.Focus(e); err != nil {
+			result.Error = l.r.masker.MaskString(err.Error())
+			return true, nil, result
+		}
+		logAction(l.r.timeline, l.index, "focus "+describeElement(e))
+	} else {
+		switch err := els.Apply(e, pattern, ""); {
+		case err == nil:
+			logAction(l.r.timeline, l.index, string(pattern)+" "+describeElement(e))
+		case errors.Is(err, desktop.ErrNoPattern):
+			return false, nil, computeruse.Result{}
+		default:
+			result.Error = l.r.masker.MaskString(err.Error())
+			return true, nil, result
+		}
+	}
+	l.touched = true
+	recorded := l.recordInvoked(action, e)
+	return true, &recorded, result
+}
+
+// recordInvoked records an element the model invoked as the click it asked
+// for, landing at the element's centre, so a later run can replay it by the
+// element or, on a host without one, by that pixel.
+func (l *actLoop) recordInvoked(action computeruse.Action, e desktop.Element) recordedAction {
+	centre := elementCentre(e)
+	display := computeruse.Action{Kind: computeruse.KindClick, Count: action.Count, Button: action.Button, Point: &computeruse.Point{X: centre.X, Y: centre.Y}}
+	element := l.r.recordElement(e, &centre, l.r.driver.WindowAt(centre).App)
+	return recordAction(display, l.seen.full, element)
+}
+
+// reconcile waits for a person using the desktop to pause, then reports
+// whether the turn's actions may run. They run only when the world still
+// matches the screen the model chose them on; otherwise the model is sent a
+// fresh screen with a note saying why, so a click or keystroke never lands
+// on a window that moved or was covered after the screenshot. A person who
+// left the screen exactly as the model saw it costs no extra model turn.
+func (l *actLoop) reconcile(ctx context.Context, turn *computeruse.Turn) (run bool, note string, err error) {
+	if len(turn.Actions) == 0 {
+		return true, "", nil
+	}
+	person, err := l.personUsed(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	same, err := l.unchanged(ctx, turn)
+	if err != nil {
+		return false, "", err
+	}
+	if same {
+		if person {
+			logAction(l.r.timeline, l.index, "a person used the desktop, but the screen still looks the same")
+		}
+		return true, "", nil
+	}
+	if person {
+		logAction(l.r.timeline, l.index, "a person used the desktop; the model's actions were not run")
+		return false, personNote, nil
+	}
+	logAction(l.r.timeline, l.index, "the screen changed before the actions ran; they were not run")
+	return false, divergedNote, nil
+}
+
+// personUsed waits until nobody has used the desktop for the idle period and
+// reports whether a person used it after the screenshot the model saw. With
+// idle off it neither waits nor reports a person, so the world check alone
+// guards the actions.
+func (l *actLoop) personUsed(ctx context.Context) (bool, error) {
+	if l.r.cfg.idle() <= 0 {
 		return false, nil
 	}
 	if err := l.r.awaitPerson(ctx); err != nil {
@@ -226,30 +551,150 @@ func (l *actLoop) stale(ctx context.Context, turn *computeruse.Turn) (bool, erro
 	return l.r.driver.PersonInputSince(l.seen.capturedAt), nil
 }
 
-// admit rejects a turn whose actions the step may not run.
-func (l *actLoop) admit(turn *computeruse.Turn) error {
+// unchanged reports whether the screen still looks like the one the model
+// chose the turn's actions on, overall and where each action lands.
+func (l *actLoop) unchanged(ctx context.Context, turn *computeruse.Turn) (bool, error) {
+	// A person who clicked another window changed nothing a screenshot
+	// shows, but keys and typing now go there. The focus must be the
+	// window the model saw; where the system does not report it, a turn
+	// that types or presses keys goes back to the model.
+	if l.focusLeftModel(turn) {
+		return false, nil
+	}
+	current, err := l.r.settle(ctx)
+	if err != nil {
+		return false, err
+	}
+	// The focus may have moved again while the screen settled, so a turn
+	// never runs its keys against a window the model did not see.
+	if l.focusLeftModel(turn) {
+		return false, nil
+	}
+	chosen := recordedTurn{Screen: desktop.FingerprintOf(l.seen.full)}
+	for _, action := range turn.Actions {
+		if display, ok := l.r.toDisplay(action, l.seen); ok {
+			chosen.Actions = append(chosen.Actions, recordAction(display, l.seen.full, nil))
+		}
+	}
+	entry := recording{Width: l.seen.full.Bounds().Dx(), Height: l.seen.full.Bounds().Dy()}
+	return matches(current, entry, chosen), nil
+}
+
+// focusLeftModel reports that a turn's keys would reach a window other than
+// the one the model saw. Only a known focus that differs from the known
+// window the model saw is evidence of that: an unknown focus, which is what
+// a backend that cannot name the focused window reports, is no evidence, so
+// the pixel check alone then guards the turn.
+func (l *actLoop) focusLeftModel(turn *computeruse.Turn) bool {
+	if !usesKeyboard(turn.Actions) {
+		return false
+	}
+	focus := l.r.driver.FocusedWindow()
+	return focus.Known() && l.seen.focus.Known() && focus != l.seen.focus
+}
+
+// usesKeyboard reports a turn that sends keys to whatever window has the
+// focus: typing or key presses, or a pointer action that holds modifiers,
+// whose key-down reaches the focus wherever the pointer is.
+func usesKeyboard(actions []computeruse.Action) bool {
+	for _, action := range actions {
+		switch action.Kind {
+		case computeruse.KindType, computeruse.KindKey, computeruse.KindHoldKey:
+			return true
+		case computeruse.KindClick, computeruse.KindMove, computeruse.KindDrag, computeruse.KindScroll:
+			if len(action.Modifiers) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// admit rejects a turn whose actions the step may not run, and reports a
+// turn whose actions would take the task past its budget.
+func (l *actLoop) admit(turn *computeruse.Turn) (over bool, err error) {
 	if turn.Confirmation != "" && len(turn.Actions) > 0 && l.r.cfg.OnConfirmation != confirmationAllow {
-		return fmt.Errorf("the model provider asks a person to confirm the next actions (%s); add an ask operation before this act and set on_confirmation: allow", turn.Confirmation)
+		return false, fmt.Errorf("the model provider asks a person to confirm the next actions (%s); add an ask operation before this act and set on_confirmation: allow", turn.Confirmation)
 	}
-	if l.spent+l.outcome.actions+len(turn.Actions) > l.budget {
-		return fmt.Errorf("the task needed more than max_actions (%d) actions", l.budget)
+	return l.spent+l.outcome.actions+len(turn.Actions) > l.budget, nil
+}
+
+// describeRound summarizes a round of actions so two rounds can be compared.
+func describeRound(actions []computeruse.Action) string {
+	parts := make([]string, 0, len(actions))
+	for _, action := range actions {
+		parts = append(parts, describeAction(action))
 	}
-	return nil
+	return strings.Join(parts, "\n")
 }
 
 // apply performs a turn's actions and records the ones that completed.
 func (l *actLoop) apply(ctx context.Context, turn *computeruse.Turn) []computeruse.Result {
-	results, recorded := l.r.perform(ctx, l.index, turn.Actions, l.seen, l.limit)
 	l.touched = l.touched || len(turn.Actions) > 0
 	l.outcome.actions += len(turn.Actions)
+	els, _ := l.r.elementsIfAvailable()
+	results := make([]computeruse.Result, len(turn.Actions))
+	var recorded []recordedAction
+	failed := false
+	for i := range turn.Actions {
+		action := turn.Actions[i]
+		if failed {
+			results[i] = computeruse.Result{CallID: action.CallID, Skipped: true}
+			continue
+		}
+		var rec *recordedAction
+		if action.ElementID != "" {
+			e, ok := l.choices[action.ElementID]
+			if !ok {
+				results[i] = computeruse.Result{CallID: action.CallID, Error: fmt.Sprintf("no element %q is on the screen now; look at the latest list and choose one of its ids", action.ElementID)}
+				failed = true
+				continue
+			}
+			logAction(l.r.timeline, l.index, fmt.Sprintf("element %s is %s %q", action.ElementID, e.Role, e.Name))
+			if invoked, invokedRec, invokedResult := l.invokeElement(ctx, els, action, e); invoked {
+				results[i], rec = invokedResult, invokedRec
+				if invokedResult.Failed() {
+					logAction(l.r.timeline, l.index, "  failed: "+invokedResult.Error)
+					failed = true
+					continue
+				}
+				recorded = appendRecorded(recorded, rec)
+				continue
+			}
+			// No pattern, or a host without elements: click the element's
+			// position on the screen instead.
+			point := l.seen.toModel(elementCentre(e))
+			action.Point = &point
+			action.ElementID = ""
+		}
+		results[i], rec = l.r.performOne(ctx, l.index, action, l.seen, l.limit)
+		if results[i].Failed() {
+			failed = true
+			continue
+		}
+		recorded = appendRecorded(recorded, rec)
+	}
 	if len(recorded) > 0 {
 		l.outcome.recording.Turns = append(l.outcome.recording.Turns, recordedTurn{
 			Screen:    desktop.FingerprintOf(l.seen.full),
 			Actions:   recorded,
 			Confirmed: turn.Confirmation != "",
 		})
+		for _, rec := range recorded {
+			if rec.Element != nil {
+				l.elements = append(l.elements, *rec.Element)
+			}
+		}
 	}
 	return results
+}
+
+// appendRecorded adds a recorded action when the action produced one.
+func appendRecorded(recorded []recordedAction, rec *recordedAction) []recordedAction {
+	if rec != nil {
+		recorded = append(recorded, *rec)
+	}
+	return recorded
 }
 
 // finish ends the act with the model's report.
@@ -265,6 +710,11 @@ func (l *actLoop) finish(ctx context.Context, turn *computeruse.Turn) error {
 		}
 	}
 	l.outcome.recording.Final = desktop.FingerprintOf(final)
+	l.outcome.recording.Version = recordingVersion
+	l.outcome.recording.System, l.outcome.recording.SavedAt = l.r.system, time.Now().UTC()
+	if len(l.elements) > 0 {
+		l.r.landmarks(&l.outcome.recording, l.elements)
+	}
 	l.outcome.summary = turn.Done.Summary
 	return nil
 }

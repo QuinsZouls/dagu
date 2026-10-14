@@ -19,6 +19,12 @@ function dagDefinitionsEntry(page: Page, dagName: string) {
     .first();
 }
 
+function specViewButton(page: Page, name: string) {
+  return page
+    .getByRole('group', { name: 'View mode' })
+    .getByRole('button', { name, exact: true });
+}
+
 function localScopedURL(baseURL: string, path: string) {
   const url = new URL(path, baseURL);
   url.searchParams.set('remoteNode', 'local');
@@ -40,7 +46,7 @@ test.describe('DAG CRUD operations', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.getByLabel('DAG Name').fill(dagName);
+    await dialog.getByLabel('Workflow name').fill(dagName);
     await dialog.getByRole('button', { name: 'Create' }).click();
 
     await expect(page).toHaveURL(new RegExp(`/dags/${dagName}/spec$`));
@@ -84,6 +90,10 @@ steps:
       await expect(saveButton).toBeDisabled();
     };
     await expect(warning).toBeVisible();
+    // The default viewport is too narrow for Split, so the tab opens on the
+    // graph; the YAML view also shows the warnings.
+    await specViewButton(page, 'YAML').click();
+    await expect(warning).toBeVisible();
     const editor = page.locator('.monaco-editor textarea').first();
     await editor.focus();
     await page.keyboard.press('ControlOrMeta+End');
@@ -98,14 +108,15 @@ steps:
     await expect(page.getByText('Valid', { exact: true })).toBeVisible();
     await expect(warning).toHaveCount(0);
     await saveSpec();
+    // The chosen view survives a reload.
     await page.reload();
     await expect(page.locator('.monaco-editor')).toBeVisible();
     await expect(warning).toHaveCount(0);
   });
 
-  // Live validation redraws the graph, step table and errors above the
-  // editor. None of that may move the editor while the user types.
-  test('keeps the spec editor in place while the preview updates', async ({ page, request }) => {
+  // Live validation redraws the graph and errors beside the editor. None of
+  // that may move the editor while the user types.
+  test('keeps the spec editor in place while the split preview updates', async ({ page, request }) => {
     const stack = await loadStack();
     const token = await loginViaAPI(
       request,
@@ -120,24 +131,18 @@ steps:
 `;
     const fileName = await writeLocalDAG(dagName, definition);
     await waitForDAGAvailable(request, token, fileName);
+    // Wide enough for the graph to sit beside the editor.
+    await page.setViewportSize({ width: 1600, height: 900 });
     await page.goto(`/dags/${encodeURIComponent(fileName)}/spec`);
 
     const graph = page.locator('.mermaid svg');
     const monaco = page.locator('.monaco-editor').first();
-    await expect(graph.getByText('first', { exact: true })).toBeVisible();
-    await expect(monaco).toBeVisible();
-    // Leave the bottom of the preview in view, where browser scroll
-    // anchoring alone would pin the preview rather than the editor.
-    await page
-      .getByRole('heading', { name: 'YAML', exact: true })
-      .evaluate((heading) => {
-        heading.scrollIntoView({ block: 'start' });
-        let scroller = heading.parentElement;
-        while (scroller && getComputedStyle(scroller).overflowY !== 'auto') {
-          scroller = scroller.parentElement;
-        }
-        scroller?.scrollBy(0, -150);
-      });
+    await expect(specViewButton(page, 'Split')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    await expect(graph.getByText('first', { exact: true })).toBeInViewport();
+    await expect(monaco).toBeInViewport();
     const editorTop = async () => (await monaco.boundingBox())?.y ?? NaN;
     const initialTop = await editorTop();
     // Scroll positions snap to whole pixels while preview heights do not.
@@ -211,8 +216,8 @@ steps:
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.getByLabel('DAG Name').clear();
-    await dialog.getByLabel('DAG Name').fill(newName);
+    await dialog.getByLabel('Workflow name').clear();
+    await dialog.getByLabel('Workflow name').fill(newName);
     await dialog.getByRole('button', { name: 'Rename' }).click();
 
     await expect(page).toHaveURL(
@@ -252,7 +257,7 @@ steps:
 
     const deleteDialog = page.getByRole('dialog');
     await expect(deleteDialog).toBeVisible();
-    await expect(deleteDialog).toContainText('Delete DAG');
+    await expect(deleteDialog).toContainText('Delete workflow');
     await expect(deleteDialog).toContainText(fileName);
     await deleteDialog
       .getByRole('button', { name: 'Delete', exact: true })
@@ -271,6 +276,62 @@ steps:
       }
     );
     expect(response.ok()).toBeFalsy();
+  });
+
+  // Pins are shared by every user of the server, so the test always unpins.
+  test('pins and unpins a workflow', async ({ page, request }) => {
+    const stack = await loadStack();
+    const token = await loginViaAPI(
+      request,
+      stack.auth.adminUsername,
+      stack.auth.adminPassword
+    );
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const dagName = uniqueName('e2e-pin');
+    const fileName = await writeLocalDAG(
+      dagName,
+      `
+name: ${dagName}
+steps:
+  - name: echo
+    run: echo "pin test"
+`
+    );
+    await waitForDAGAvailable(request, token, fileName);
+    const isPinned = async () => {
+      const resp = await request.get(
+        `/api/v1/dags/${encodeURIComponent(fileName)}?remoteNode=local`,
+        { headers }
+      );
+      return ((await resp.json()) as { pinned: boolean }).pinned;
+    };
+
+    try {
+      await page.goto('/dags/');
+      const dagEntry = dagDefinitionsEntry(page, dagName);
+      await expect(dagEntry).toBeVisible();
+      await dagEntry
+        .getByRole('button', { name: `Pin workflow ${dagName}` })
+        .click();
+      await expect.poll(isPinned, { timeout: 15_000 }).toBe(true);
+      await expect(
+        page.getByText('Pinned', { exact: true }).first()
+      ).toBeVisible();
+
+      await page.goto(`/dags/${encodeURIComponent(fileName)}`);
+      const headerPin = page.getByRole('button', {
+        name: `Pin workflow ${dagName}`,
+      });
+      await expect(headerPin).toHaveAttribute('aria-pressed', 'true');
+      await headerPin.click();
+      await expect.poll(isPinned, { timeout: 15_000 }).toBe(false);
+    } finally {
+      await request.delete(
+        `/api/v1/dags/${encodeURIComponent(fileName)}/pin?remoteNode=local`,
+        { headers }
+      );
+    }
   });
 
   test('suspends and resumes a DAG schedule', async ({ page, request }) => {
@@ -304,7 +365,7 @@ steps:
     await scheduleToggle.click();
     const disableDialog = page.getByRole('dialog');
     await expect(disableDialog).toBeVisible();
-    await expect(disableDialog).toContainText('Disable Schedule');
+    await expect(disableDialog).toContainText('Disable schedule');
     await disableDialog.getByRole('button', { name: 'Disable' }).click();
     await expect(disableDialog).toBeHidden();
 
@@ -332,7 +393,7 @@ steps:
     await scheduleToggle.click();
     const enableDialog = page.getByRole('dialog');
     await expect(enableDialog).toBeVisible();
-    await expect(enableDialog).toContainText('Enable Schedule');
+    await expect(enableDialog).toContainText('Enable schedule');
     await enableDialog.getByRole('button', { name: 'Enable' }).click();
     await expect(enableDialog).toBeHidden();
 
@@ -363,7 +424,7 @@ steps:
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.getByLabel('DAG Name').fill('invalid name with spaces!');
+    await dialog.getByLabel('Workflow name').fill('invalid name with spaces!');
     await dialog.getByRole('button', { name: 'Create' }).click();
 
     // Dialog stays open — validation prevents creation

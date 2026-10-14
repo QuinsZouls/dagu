@@ -1010,11 +1010,11 @@ function Artifacts() {
           {artifactViewError}
         </p>
       )}
-      <div className="mb-3 space-y-3 rounded-lg border border-border bg-card/50 p-3">
+      <div className="mb-4 space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <I18nProps>
             <Input
-              placeholder="Filter by DAG name..."
+              placeholder="Filter by workflow name..."
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               onKeyDown={handleInputKeyPress}
@@ -1141,7 +1141,7 @@ function Artifacts() {
             <p className="mt-1 max-w-md text-center">
               <I18nText
                 text={
-                  'No DAG-runs in the selected time range produced artifact files. Adjust the date range or filters.'
+                  'No runs in the selected time range produced artifact files. Adjust the date range or filters.'
                 }
               />
             </p>
@@ -1156,7 +1156,9 @@ function Artifacts() {
                   <I18nText text={'Artifacts'} />
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {ts('{count} files', { count: fileCount })}
+                  {ts(fileCount === 1 ? '{count} file' : '{count} files', {
+                    count: fileCount,
+                  })}
                   {items.some((item) => item.filesTruncated) ? (
                     <span className="ml-1">
                       <I18nText
@@ -1195,9 +1197,12 @@ function Artifacts() {
                           </span>
                           <span className="shrink-0 text-[11px] text-muted-foreground">
                             {item.files.length > 0
-                              ? ts('{count} files', {
-                                  count: item.files.length,
-                                })
+                              ? ts(
+                                  item.files.length === 1
+                                    ? '{count} file'
+                                    : '{count} files',
+                                  { count: item.files.length }
+                                )
                               : '—'}
                           </span>
                         </div>

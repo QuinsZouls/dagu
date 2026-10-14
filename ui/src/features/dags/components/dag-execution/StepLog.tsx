@@ -14,7 +14,7 @@ import React, {
   useState,
 } from 'react';
 import { ChevronDown, ChevronUp, Download, Search, X } from 'lucide-react';
-import { components, Stream } from '../../../../api/v1/schema';
+import { components, NodeStatus, Stream } from '../../../../api/v1/schema';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ReloadButton } from '@/components/ui/reload-button';
@@ -23,9 +23,13 @@ import { downloadFromUrl } from '@/lib/download';
 import { useConfig } from '../../../../contexts/ConfigContext';
 import { useRemoteNode } from '../../../../contexts/RemoteNodeContext';
 import { useUserPreferences } from '../../../../contexts/UserPreference';
-import { useQuery } from '../../../../hooks/api';
-import { whenEnabled } from '../../../../hooks/queryUtils';
 import { useStepLogSSE } from '../../../../hooks/useStepLogSSE';
+import {
+  type ForeachLogTarget,
+  isSubDAGRun as isSubDAGRunDetails,
+  stepLogDownloadPath,
+  useStepLogQuery,
+} from '../../hooks/useStepLogQuery';
 import { AnsiLine, stripAnsi } from '@/lib/ansi';
 import { isActiveNodeStatus } from '../../../../lib/status-utils';
 import LoadingIndicator from '@/components/ui/loading-indicator';
@@ -66,6 +70,10 @@ type Props = {
   stream?: Stream;
   /** Node information (optional) - contains repeated log files */
   node?: components['schemas']['Node'];
+  /** Status of the step whose log is shown, when no node describes it */
+  status?: NodeStatus;
+  /** Reads a body step log of a foreach item; stepName is then the body step */
+  foreach?: ForeachLogTarget;
   followTail?: boolean;
   onFollowTailChange?: (following: boolean) => void;
   onSettled?: (stepName: string) => void;
@@ -86,6 +94,8 @@ function StepLog(props: Props) {
     props.stream,
     props.dagRun?.rootDAGRunName,
     props.dagRun?.rootDAGRunId,
+    props.foreach?.stepName,
+    props.foreach?.item,
   ]);
   return <StepLogContent key={identity} {...props} />;
 }
@@ -97,6 +107,8 @@ function StepLogContent({
   dagRun,
   stream = Stream.stdout,
   node,
+  status,
+  foreach,
   followTail,
   onFollowTailChange,
   onSettled,
@@ -115,7 +127,7 @@ function StepLogContent({
   const [navigationOpen, setNavigationOpen] = useState(false);
   const controlledFollowTail = followTail !== undefined;
   const showNavigation = !controlledFollowTail || navigationOpen;
-  const isActive = isActiveNodeStatus(node?.status);
+  const isActive = isActiveNodeStatus(status ?? node?.status);
 
   const [localLiveMode, setLocalLiveMode] = useState(isActive);
   const [localFollowing, setLocalFollowing] = useState(true);
@@ -138,18 +150,16 @@ function StepLogContent({
   const navigationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
-  const isSubDAGRun =
-    dagRun &&
-    dagRun.rootDAGRunId &&
-    dagRun.rootDAGRunName &&
-    dagRun.rootDAGRunId !== dagRun.dagRunId;
+  const isSubDAGRun = isSubDAGRunDetails(dagRun);
 
   // SSE supplies a fixed tail with stdout counts; other views use REST.
+  // Foreach body logs have no SSE topic and always poll.
   const shouldUseSSE =
     viewMode === 'tail' &&
     liveMode &&
     isActive &&
     !isSubDAGRun &&
+    !foreach &&
     stream === Stream.stdout &&
     pageSize === SSE_TAIL_LINES;
   const sseResult = useStepLogSSE(
@@ -182,54 +192,11 @@ function StepLogContent({
     [isActive, liveMode, usePolling]
   );
 
-  const subDAGQuery = useQuery(
-    '/dag-runs/{name}/{dagRunId}/sub-dag-runs/{subDAGRunId}/steps/{stepName}/log',
-    whenEnabled(!!isSubDAGRun, {
-      params: {
-        query: {
-          remoteNode,
-          stream,
-          tail,
-          head,
-          offset,
-          limit,
-        },
-        path: {
-          name: dagRun?.rootDAGRunName as string,
-          dagRunId: dagRun?.rootDAGRunId as string,
-          subDAGRunId: dagRun?.dagRunId as string,
-          stepName,
-        },
-      },
-    }),
+  const { data, isLoading, error, mutate } = useStepLogQuery(
+    { dagName, dagRunId, stepName, dagRun, foreach },
+    { stream, tail, head, offset, limit },
     swrOptions
   );
-
-  const dagRunQuery = useQuery(
-    '/dag-runs/{name}/{dagRunId}/steps/{stepName}/log',
-    whenEnabled(!isSubDAGRun, {
-      params: {
-        query: {
-          remoteNode,
-          stream,
-          tail,
-          head,
-          offset,
-          limit,
-        },
-        path: {
-          name: dagName,
-          dagRunId,
-          stepName,
-        },
-      },
-    }),
-    swrOptions
-  );
-
-  const { data, isLoading, error, mutate } = isSubDAGRun
-    ? subDAGQuery
-    : dagRunQuery;
 
   useEffect(() => {
     const finished = !isActive && (wasActive.current || !!onSettled);
@@ -436,19 +403,23 @@ function StepLogContent({
   }
 
   const handleDownload = useCallback(async () => {
-    const endpoint = isSubDAGRun
-      ? `${config.apiURL}/dag-runs/${dagRun?.rootDAGRunName}/${dagRun?.rootDAGRunId}/sub-dag-runs/${dagRun?.dagRunId}/steps/${stepName}/log/download`
-      : `${config.apiURL}/dag-runs/${dagName}/${dagRunId}/steps/${stepName}/log/download`;
+    const endpoint = stepLogDownloadPath(config.apiURL, {
+      dagName,
+      dagRunId,
+      stepName,
+      dagRun,
+      foreach,
+    });
 
     const url = new URL(endpoint, window.location.origin);
     url.searchParams.set('remoteNode', remoteNode);
     url.searchParams.set('stream', stream);
 
+    const fileStem = foreach
+      ? `${dagName}-${dagRunId}-${foreach.stepName}-${foreach.item}-${stepName}`
+      : `${dagName}-${dagRunId}-${stepName}`;
     try {
-      await downloadFromUrl(
-        url.toString(),
-        `${dagName}-${dagRunId}-${stepName}-${stream}.log`
-      );
+      await downloadFromUrl(url.toString(), `${fileStem}-${stream}.log`);
     } catch (err) {
       console.error('Download failed:', err);
     }
@@ -459,7 +430,7 @@ function StepLogContent({
     stepName,
     stream,
     dagRun,
-    isSubDAGRun,
+    foreach,
     remoteNode,
   ]);
 
@@ -566,7 +537,7 @@ function StepLogContent({
                 onClick={() => handleViewModeChange('tail')}
                 disabled={isNavigating}
               >
-                <I18nText text={'Show End'} />
+                <I18nText text={'Show end'} />
               </Button>
               <Button
                 size="sm"
@@ -574,7 +545,7 @@ function StepLogContent({
                 onClick={() => handleViewModeChange('head')}
                 disabled={isNavigating}
               >
-                <I18nText text={'Show Beginning'} />
+                <I18nText text={'Show beginning'} />
               </Button>
               <Button
                 size="sm"

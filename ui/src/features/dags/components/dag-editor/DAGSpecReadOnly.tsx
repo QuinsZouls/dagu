@@ -24,7 +24,7 @@ import { useErrorModal } from '@/components/ui/error-modal';
 import { useSimpleToast } from '@/components/ui/simple-toast';
 import { useCanWrite } from '@/contexts/AuthContext';
 import { useConfig } from '@/contexts/ConfigContext';
-import { useUserPreferences } from '@/contexts/UserPreference';
+import { useResolvedTheme } from '@/contexts/UserPreference';
 import { cn } from '@/lib/utils';
 import { RefreshCw, Save, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -685,7 +685,7 @@ function DAGSpecReadOnly({
 
       <I18nProps>
         <ConfirmModal
-          title="Retry Edited DAG Run"
+          title="Retry edited run"
           buttonText={retrySubmitting ? 'Creating...' : 'Create new run'}
           visible={previewVisible}
           dismissModal={() => {
@@ -707,7 +707,7 @@ function DAGSpecReadOnly({
               <div className="flex min-h-0 flex-col rounded-md border bg-surface">
                 <div className="grid grid-cols-2 gap-3 border-b px-3 py-2 text-xs sm:grid-cols-4">
                   <div className="min-w-0">
-                    <div className="text-xs uppercase text-muted-foreground">
+                    <div className="text-xs text-muted-foreground">
                       <I18nText text={'Target DAG'} />
                     </div>
                     <div className="truncate font-mono text-xs">
@@ -715,19 +715,19 @@ function DAGSpecReadOnly({
                     </div>
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs uppercase text-muted-foreground">
+                    <div className="text-xs text-muted-foreground">
                       <I18nText text={'Reuse previous output'} />
                     </div>
                     <div>{selectedSkipSteps.length}</div>
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs uppercase text-muted-foreground">
+                    <div className="text-xs text-muted-foreground">
                       <I18nText text={'Run again'} />
                     </div>
                     <div>{retryStepCount}</div>
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs uppercase text-muted-foreground">
+                    <div className="text-xs text-muted-foreground">
                       <I18nText text={'Source DAG-run ID'} />
                     </div>
                     <div className="truncate font-mono text-xs">{dagRunId}</div>
@@ -839,6 +839,13 @@ function DAGSpecReadOnly({
                                   {step.depends.join(', ')}
                                 </div>
                               )}
+                              {step.inferredDepends &&
+                                step.inferredDepends.length > 0 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    <I18nText text={'Inferred from'} />{' '}
+                                    {step.inferredDepends.join(', ')}
+                                  </div>
+                                )}
                               {!canReuse && ineligibleReason && (
                                 <div className="text-xs text-muted-foreground">
                                   {ineligibleReason}
@@ -877,8 +884,7 @@ function SourceDAGDiffDialog({
   saving: boolean;
   onSave: () => void;
 }) {
-  const preferencesContext = useUserPreferences();
-  const isDarkMode = preferencesContext?.preferences.theme === 'dark';
+  const isDarkMode = useResolvedTheme() === 'dark';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

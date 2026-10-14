@@ -1027,9 +1027,7 @@ func resolveYamlFilePath(ctx buildContext, file string) (string, error) {
 		file = filepath.Join(ctx.opts.DAGsDir, file)
 	}
 
-	if !strings.HasSuffix(file, ".yaml") && !strings.HasSuffix(file, ".yml") {
-		file += ".yaml"
-	}
+	file = fileutil.EnsureYAMLExtension(file)
 
 	return filepath.Abs(file)
 }

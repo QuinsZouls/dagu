@@ -6,7 +6,7 @@ Partially implemented.
 
 Conformance covers extraction into outputs, a multi-operation run with model
 and fixed conditions, screenshots, downloads, the replay cache, the secret
-check, allowed domains, dialogs, and validation. Waiting for input and resuming the same
+check, allowed domains, client certificates, dialogs, and validation. Waiting for input and resuming the same
 browser need the REST API and are covered by integration tests. Model prompts,
 page interaction internals, and profile locking belong to executor tests.
 
@@ -40,12 +40,21 @@ Each operation sets exactly one of:
   or typing into one field. The value is an instruction string or an object
   with `instruction` and optional `cache`.
 - `extract`: `{instruction, schema}`. The schema must be a JSON Schema with
-  `type: object`.
+  `type: object`. A string field with `format: uri` or `format: uri-reference`
+  gets the address of the element the model picks, such as a link's target;
+  any other string field gets what the model writes, which for a link is its
+  element id, such as `0-11`.
 - `expect`: a condition that must hold; otherwise the step fails with the
   reason.
 - `wait`: `{selector}` waits until the element is visible; `{duration}` pauses.
 - `screenshot`: a name; the page is saved as a PNG run artifact.
 - `ask`: `{prompt, as, timeout}` waits for a person's answer (see Human input).
+
+A `goto`, or an `act` performed or replayed, ends once the page settles, so the
+next operation reads what it brought: a page it loaded waits until its network
+is idle, and a page it changed in place until its requests end and it stops
+changing for half a second. A page that has not settled after five seconds is
+read as it is.
 
 Any operation may set `when`, a condition checked once before the operation;
 the operation is skipped unless it holds. Any operation may set `timeout`, a
@@ -115,7 +124,8 @@ those outputs. Operation progress is written to stderr.
 
 `with.browser` accepts `headless` (default `true`), `executable` (otherwise
 `CHROME_PATH` or an installed Chrome), `viewport` `{width, height}`, `proxy`
-(unauthenticated), `allowed_domains`, `screenshots`, and `profile`.
+(unauthenticated), `allowed_domains`, `screenshots`, `profile`, and
+`client_certificates`.
 
 The host configuration `browser.sandbox: false`, or the environment variable
 `DAGU_BROWSER_SANDBOX=false`, turns off Chromium's sandbox for every browser
@@ -123,6 +133,68 @@ the host starts, for hosts where the sandbox cannot start. The sandbox is on
 by default, and a DAG cannot change it. With the sandbox on, a step fails
 before starting a browser where the browser runtime would turn the sandbox off
 anyway: when `CI` is set, or when Dagu runs as root on Linux.
+
+### Client certificates
+
+`client_certificates` lists TLS client certificates and the hosts each is
+presented to, so a site that requires one opens without the operating system
+asking for the certificate's password. An entry names `hosts`, either
+`pfx_file` with `passphrase` or `passphrase_file`, or `cert_file` and an
+unencrypted `key_file` in PEM, and optionally `ca_file`, PEM certificates
+trusted for those hosts' servers besides the system's. A host is a host name
+or IP address, `*.example.com` for the subdomains of `example.com`, or `*` for
+every host. The step's relative files resolve against its working directory.
+
+The host configuration `browser.client_certificates` takes the same entries,
+with `passphrase_file` for a passphrase, and applies to every browser the host
+starts, including `dagu browser session` browsers. A step's entries come
+first, and the first entry whose hosts match a request is used. An entry with
+no hosts, a malformed host, both or neither of the file forms, or a passphrase
+for a PEM key fails validation; host configuration entries fail at startup.
+
+The certificates are read before the browser starts: an unreadable file, a
+wrong passphrase, or a key that does not match its certificate fails the step
+then, naming the entry without its passphrase. A certificate outside its
+validity period is a warning. A passphrase written in a step is masked and
+kept from the model like a secret.
+
+Dagu presents the certificates through a proxy process that runs as long as
+the browser. The browser sends it the HTTPS requests to the entries' hosts, and
+the proxy reaches those hosts the way the device does: through `proxy` when it
+is set, otherwise through the operating system's proxy settings (the proxy
+auto-config, automatic detection on Windows, or the manual proxies; the proxy
+environment variables on Linux). The browser sends every other request there
+itself. With certificates, `proxy` takes only `[scheme://]host[:port]` with
+scheme `http`, `https`, or `socks5`. A proxy that asks for authentication
+cannot carry requests to certificate hosts, and the proxy, not the browser,
+verifies those hosts' server certificates.
+
+While a browser runs, any process on the host, including another operating
+system user's, can use its certificates: through the browser's DevTools
+address, which already lets a local process drive the browser, or through the
+proxy, which listens on the loopback interface. Present certificates only on
+hosts whose users are trusted with them.
+
+While the browser presents certificates, it also guards its other HTTPS
+requests: the proxy carries them too, presenting no certificate, so the
+browser never asks the operating system for one, which would wait on a
+system prompt nobody answers. The host configuration
+`browser.guard_client_certificates` (or `DAGU_BROWSER_GUARD_CLIENT_CERTIFICATES`)
+turns the guard off, or on for every browser even without certificates. When
+the device's proxy asks the certificate proxy for credentials it cannot give,
+such as a Windows sign-in, the guard stops and the browser reaches those sites
+itself; the step's log says so. The guard trusts the system's CA certificates
+and every entry's `ca_file`.
+
+A page that does not load because of a client certificate fails the
+operation that opened it: the error names what the proxy saw, such as the
+site rejecting the certificate, or says the site asks for a certificate and
+none is configured for it. That includes a site that answers with an error
+page, such as nginx's 400 or IIS's 403.7, rather than refusing the
+connection. A site that asks for a certificate and opens without one is not a
+failure. An operation that times out names the connections the proxy still
+waits on and how far each got. The step's log records each host the proxy
+presented a certificate to, each site that asked for one, and each failure.
 
 ### Allowed domains
 
@@ -190,17 +262,23 @@ query or fragment match. When a replay fails, the step asks the model again.
 If the step succeeds, the model's new actions replace the recording; an act
 that records no actions, such as one whose click loaded a new document before
 it reported back, removes the recording instead, unless another run of the step
-replaced it first. A replay fails when a recorded element is gone or is on the
-page but not visible, such as a field in a closed dialog. `act.cache: false`
-disables the cache for one operation.
+replaced it first. A replay fails when a recorded element is gone, is on the
+page but not visible, such as a field in a closed dialog, or is no longer the
+element the act recorded: the element at the recorded location has another
+accessibility role or name, or a select there does not offer the recorded
+option. When other elements on the page shared the recorded element's role and
+name, such as a Delete button in each row of a list, the text of its row must
+also match. Without such a row, the replay fails when the page has more
+elements of that role and name than when the act recorded it. An element
+without a name is told apart by its role only.
+`act.cache: false` disables the cache for one operation.
 
 Runs of a step share its recordings, and each `act` reads them when it runs. A
 recording that another run of the step replaced or removed meanwhile, such as
 an earlier `foreach` item waiting for the same profile, is not replayed.
 
 The cache covers `act` only. `extract` and model-judged conditions make model
-requests on every run. A replay that finds an element at the recorded location
-succeeds even if the page layout changed and a different element is now there.
+requests on every run.
 
 `dagu browser cache clear <dag>` removes the recorded actions of every step of
 the DAG, or of one step with `--step <id>`, and reports the steps it removed.
@@ -210,12 +288,15 @@ also clears its cache; removing only older runs keeps it. Each clears the cache
 on its own host only. After a clear, the next run of the step makes a model
 request and records again.
 
+`dagu browser session export` writes the recordings of the acts a browser
+session ran for a step that has not run yet (Spec 079).
+
 ### Profiles
 
 `browser.profile` names a persistent browser profile kept on the executing
 host. Cookies and storage survive across runs on that host. Runs that use the
 same profile run one at a time; a run fails immediately when another run
-waiting for input holds the profile.
+waiting for input, or a browser session (Spec 079), holds the profile.
 
 ### Human input
 
@@ -241,14 +322,24 @@ an `act` does not complete, an `expect` does not hold, a selector does not
 appear before the timeout, a download does not finish, the page leaves the
 allowed domains, the browser stops responding, or the browser cannot be
 started. When an `act` fails because its model chose no element, the error
-names the model, since some models give that answer for every request.
+names the model, since some models give that answer for every request. An
+`act` whose model picks an option that the select does not offer does not
+complete. A page that does not load because of a client certificate fails the
+operation that opened it, as described under Client certificates.
+
+Loading a DAG warns, without failing, about each `extract` string field whose
+name ends in `url`, `uri`, `link`, or `href`, singular or plural, and that has
+neither address format, naming the operation and the field's path, such as
+`do[0]: extract field "listings[].link"`.
 
 The browser can lose its connection to the page before an `act` or a replay
-reports back, as when a click loads a new page. The step then checks the page
-instead of acting blindly, which could submit a form twice: a new document
-means the action took effect, and the step goes on; the same document means it
-did not, and the act runs once more. Losing the page again, or a page that
-cannot be read, fails the step.
+reports back, as when a click or a chosen option loads a new page. The step
+then checks the page instead of acting blindly, which could submit a form
+twice: a new document means the action took effect, and the step goes on; the
+same document means it did not, and the act runs once more. Losing the page
+again, or a page that cannot be read, fails the step. So does losing the page
+to a frame that loads a new document while the page keeps its own: the action
+may have caused that load, so acting again could repeat it.
 
 ## Examples
 

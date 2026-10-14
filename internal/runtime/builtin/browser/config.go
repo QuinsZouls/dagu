@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	cmnconfig "github.com/dagucloud/dagu/v2/internal/cmn/config"
 	"github.com/dagucloud/dagu/v2/internal/executor/registry"
 	"github.com/dagucloud/dagu/v2/internal/ir"
 	"github.com/dagucloud/dagu/v2/internal/runtime/builtin/internal/agentstep"
@@ -48,7 +49,7 @@ const (
 
 func init() {
 	registry.RegisterExecutorConfigSchema(executorType, configSchema)
-	executor.RegisterExecutor(executorType, newExecutor, validateStep, registry.ExecutorCapabilities{LLM: true})
+	executor.RegisterExecutor(executorType, newExecutor, validateStep, registry.ExecutorCapabilities{LLM: true, ConfigWarnings: configWarnings})
 }
 
 // config is the resolved with block of a browser step.
@@ -69,6 +70,9 @@ type browserOptions struct {
 	AllowedDomains []string  `json:"allowed_domains,omitempty"`
 	Screenshots    string    `json:"screenshots,omitempty"`
 	Profile        string    `json:"profile,omitempty"`
+	// ClientCertificates are presented to the hosts they name, before
+	// those configured for the host.
+	ClientCertificates []cmnconfig.BrowserClientCertificate `json:"client_certificates,omitempty"`
 }
 
 type viewport struct {
@@ -119,6 +123,16 @@ func (a *actSpec) UnmarshalJSON(data []byte) error {
 	}
 	type plain actSpec
 	return json.Unmarshal(data, (*plain)(a))
+}
+
+// MarshalJSON writes an act that sets nothing but its instruction as the
+// instruction string, the form it is usually written in.
+func (a actSpec) MarshalJSON() ([]byte, error) {
+	if a.Cache == nil {
+		return json.Marshal(a.Instruction)
+	}
+	type plain actSpec
+	return json.Marshal(plain(a))
 }
 
 // kind returns the operation name.
@@ -258,6 +272,11 @@ func (c config) validate() error {
 		}
 		if err := validateDomainPattern(pattern); err != nil {
 			return fmt.Errorf("browser: %w", err)
+		}
+	}
+	for i, certificate := range c.Browser.ClientCertificates {
+		if err := certificate.Validate(); err != nil {
+			return fmt.Errorf("browser: client_certificates[%d]: %w", i, err)
 		}
 	}
 	if profile := c.Browser.Profile; profile != "" && !agentstep.FileNamePattern.MatchString(profile) {
@@ -459,6 +478,23 @@ var configSchema = &jsonschema.Schema{
 				"allowed_domains": {Type: "array", Items: agentstep.NonEmptyString()},
 				"screenshots":     {Type: "string", Enum: []any{screenshotsOnFailure, screenshotsFinal, screenshotsEach, screenshotsNever}},
 				"profile":         agentstep.NonEmptyString(),
+				"client_certificates": {
+					Type: "array",
+					Items: &jsonschema.Schema{
+						Type:                 "object",
+						AdditionalProperties: agentstep.NoExtraProperties(),
+						Required:             []string{"hosts"},
+						Properties: map[string]*jsonschema.Schema{
+							"hosts":           {Type: "array", MinItems: new(1), Items: agentstep.NonEmptyString()},
+							"pfx_file":        agentstep.NonEmptyString(),
+							"cert_file":       agentstep.NonEmptyString(),
+							"key_file":        agentstep.NonEmptyString(),
+							"ca_file":         agentstep.NonEmptyString(),
+							"passphrase":      agentstep.StringSchema(),
+							"passphrase_file": agentstep.NonEmptyString(),
+						},
+					},
+				},
 			},
 		},
 		"variables": {Type: "object", AdditionalProperties: agentstep.StringSchema()},

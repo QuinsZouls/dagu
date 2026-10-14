@@ -126,7 +126,7 @@ describe('DAGDetailsSidePanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Loading DAG details...')).toBeInTheDocument();
+    expect(screen.getByText('Loading workflow...')).toBeInTheDocument();
   });
 
   it('uses a null query key while closed so the detail request is truly disabled', () => {
@@ -171,7 +171,10 @@ describe('DAGDetailsSidePanel', () => {
       screen.getByText('DAG not found or has been deleted.')
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    // Both the toolbar and the not-found state offer a close action.
+    const closeButtons = screen.getAllByRole('button', { name: 'Close' });
+    expect(closeButtons).toHaveLength(2);
+    fireEvent.click(closeButtons[closeButtons.length - 1]!);
     expect(onClose).toHaveBeenCalled();
   });
 

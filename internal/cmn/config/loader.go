@@ -151,6 +151,38 @@ func (l *ConfigLoader) resolvePath(fieldName, pathValue string) (string, error) 
 	return resolved, nil
 }
 
+// loadBrowserClientCertificates resolves the files of each client
+// certificate and rejects a malformed one.
+func (l *ConfigLoader) loadBrowserClientCertificates(defs []BrowserClientCertificateDef) ([]BrowserClientCertificate, error) {
+	var certificates []BrowserClientCertificate
+	for i, def := range defs {
+		field := fmt.Sprintf("browser.client_certificates[%d]", i)
+		certificate := BrowserClientCertificate{Hosts: def.Hosts, Passphrase: def.Passphrase}
+		for _, file := range []struct {
+			name  string
+			value string
+			into  *string
+		}{
+			{"pfx_file", def.PFXFile, &certificate.PFXFile},
+			{"cert_file", def.CertFile, &certificate.CertFile},
+			{"key_file", def.KeyFile, &certificate.KeyFile},
+			{"ca_file", def.CAFile, &certificate.CAFile},
+			{"passphrase_file", def.PassphraseFile, &certificate.PassphraseFile},
+		} {
+			resolved, err := l.resolvePath(field+"."+file.name, file.value)
+			if err != nil {
+				return nil, err
+			}
+			*file.into = resolved
+		}
+		if err := certificate.Validate(); err != nil {
+			return nil, fmt.Errorf("%s: %w", field, err)
+		}
+		certificates = append(certificates, certificate)
+	}
+	return certificates, nil
+}
+
 // parseDuration parses a duration string, returning zero and adding a warning if invalid.
 func (l *ConfigLoader) parseDuration(fieldName, value string) time.Duration {
 	if value == "" {
@@ -366,6 +398,17 @@ func (l *ConfigLoader) loadCoreConfig(cfg *Config, def Definition) error {
 		cfg.OpenCode.Executable = "opencode"
 	}
 	cfg.Browser = BrowserConfig{NoSandbox: !l.v.GetBool("browser.sandbox")}
+	if l.v.IsSet("browser.guard_client_certificates") {
+		guard := l.v.GetBool("browser.guard_client_certificates")
+		cfg.Browser.GuardClientCertificates = &guard
+	}
+	if def.Browser != nil {
+		certificates, err := l.loadBrowserClientCertificates(def.Browser.ClientCertificates)
+		if err != nil {
+			return err
+		}
+		cfg.Browser.ClientCertificates = certificates
+	}
 	cfg.DAGDiscovery = DAGDiscoveryConfig{
 		Recursive: l.v.GetBool("dag_discovery.recursive"),
 		Symlinks:  l.v.GetBool("dag_discovery.symlinks"),
@@ -1341,7 +1384,28 @@ func (l *ConfigLoader) loadWorkerConfig(cfg *Config, def Definition) {
 	}
 
 	l.setWorkerDefaults(cfg)
+	l.loadWorkerShutdownTimeout(cfg, def)
 	l.setPostgresPoolDefaults(&cfg.Worker.PostgresPool)
+}
+
+// defaultWorkerShutdownTimeout sits under the 90s systemd TimeoutStopSec
+// default with room for the worker's post-deadline cleanup.
+const defaultWorkerShutdownTimeout = 60 * time.Second
+
+// loadWorkerShutdownTimeout sets worker.shutdown_timeout. It defaults to
+// defaultWorkerShutdownTimeout, also when the value is not a valid duration,
+// and 0 disables the bound.
+func (l *ConfigLoader) loadWorkerShutdownTimeout(cfg *Config, def Definition) {
+	cfg.Worker.ShutdownTimeout = defaultWorkerShutdownTimeout
+	if def.Worker == nil || def.Worker.ShutdownTimeout == "" {
+		return
+	}
+	timeout, err := time.ParseDuration(def.Worker.ShutdownTimeout)
+	if err != nil {
+		l.warnings = append(l.warnings, fmt.Sprintf("Invalid worker.shutdown_timeout value: %s", def.Worker.ShutdownTimeout))
+		return
+	}
+	cfg.Worker.ShutdownTimeout = timeout
 }
 
 func (l *ConfigLoader) setCoordinatorDefaults(cfg *Config) {
@@ -2126,6 +2190,7 @@ var envBindings = []envBinding{
 	{key: "opencode.executable", env: "OPENCODE_EXECUTABLE"},
 	{key: "opencode.env_passthrough", env: "OPENCODE_ENV_PASSTHROUGH"},
 	{key: "browser.sandbox", env: "BROWSER_SANDBOX"},
+	{key: "browser.guard_client_certificates", env: "BROWSER_GUARD_CLIENT_CERTIFICATES"},
 
 	// Secrets
 	{key: "secrets.vault.address", env: "SECRETS_VAULT_ADDRESS"},
@@ -2262,6 +2327,7 @@ var envBindings = []envBinding{
 	{key: "worker.labels", env: "WORKER_LABELS"},
 	{key: "worker.coordinators", env: "WORKER_COORDINATORS"},
 	{key: "worker.health_port", env: "WORKER_HEALTH_PORT"},
+	{key: "worker.shutdown_timeout", env: "WORKER_SHUTDOWN_TIMEOUT"},
 
 	// Peer
 	{key: "peer.cert_file", env: "PEER_CERT_FILE"},

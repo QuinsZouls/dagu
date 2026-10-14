@@ -420,7 +420,8 @@ prepare_stack() {
 run_stack() {
   prepare_stack
 
-  trap 'kill_all_services' EXIT INT TERM
+  trap 'kill_all_services' EXIT
+  trap 'exit' INT TERM
 
   start_service coordinator
   start_service server

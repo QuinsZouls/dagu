@@ -16,10 +16,13 @@ import { components, Status } from '../../../../api/v1/schema';
 import { useConfig } from '../../../../contexts/ConfigContext';
 import dayjs from '../../../../lib/dayjs';
 import { useCopyFeedback } from '@/hooks/useCopyFeedback';
+import RelativeTime from '@/components/ui/relative-time';
 import StatusChip from '@/components/ui/status-chip';
 import AutoRetryBadge from '../../../dag-runs/components/common/AutoRetryBadge';
+import { workspaceNameFromLabels } from '../../../../lib/workspace';
 import { RootDAGRunContext } from '../../contexts/RootDAGRunContext';
 import { DAGActions } from '../common';
+import DAGPinButton from './DAGPinButton';
 import { I18nText } from '@/i18n/I18nText';
 import { I18nProps } from '@/i18n/I18nProps';
 import { useI18n } from '@/i18n/I18nProvider';
@@ -31,6 +34,10 @@ interface DAGHeaderProps {
   refreshFn: () => void;
   formatDuration: (startDate: string, endDate: string) => string;
   buildScopedUrl?: (path: string) => string;
+  /** Whether the DAG is pinned; the pin button is hidden when unknown. */
+  pinned?: boolean;
+  /** Called after the user pins or unpins the DAG. */
+  onPinnedChange?: () => void;
 }
 
 const DAGHeader: React.FC<DAGHeaderProps> = ({
@@ -40,6 +47,8 @@ const DAGHeader: React.FC<DAGHeaderProps> = ({
   refreshFn,
   formatDuration,
   buildScopedUrl,
+  pinned,
+  onPinnedChange,
 }) => {
   const { ts } = useI18n();
   const navigate = useNavigate();
@@ -67,6 +76,9 @@ const DAGHeader: React.FC<DAGHeaderProps> = ({
   const dagRunToDisplay = rootDAGRunContext.data || currentDAGRun;
 
   const displayName = dagRunToDisplay?.name || dag.name;
+  // A sub DAG run shown in this header is not described by this DAG.
+  const description =
+    displayName === dag.name ? dag.description?.trim() : undefined;
 
   // Calculate duration between start and end times
   const calculateDuration = React.useCallback(() => {
@@ -184,7 +196,7 @@ const DAGHeader: React.FC<DAGHeaderProps> = ({
     dagRunToDisplay.dagRunId === dagRunToDisplay.rootDAGRunId;
 
   return (
-    <div className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm sm:rounded-2xl sm:p-6">
+    <div className="min-w-0">
       {/* Header with title and actions */}
       <div className="mb-4 flex min-w-0 flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div className="flex-1 min-w-0">
@@ -232,7 +244,7 @@ const DAGHeader: React.FC<DAGHeaderProps> = ({
           )}
 
           <div className="flex min-w-0 items-center gap-2">
-            <h1 className="min-w-0 break-words text-2xl font-bold text-foreground sm:truncate">
+            <h1 className="min-w-0 break-words text-2xl font-semibold tracking-[-0.01em] text-foreground sm:truncate">
               {displayName}
             </h1>
             {displayName && (
@@ -281,7 +293,30 @@ const DAGHeader: React.FC<DAGHeaderProps> = ({
                 ''
               )}
             </span>
+            {pinned !== undefined && displayName === dag.name && (
+              <DAGPinButton
+                fileName={fileName}
+                name={dag.name}
+                pinned={pinned}
+                workspace={workspaceNameFromLabels([
+                  ...(dag.labels ?? []),
+                  ...(dag.tags ?? []),
+                ])}
+                onChanged={() => {
+                  refreshFn();
+                  onPinnedChange?.();
+                }}
+              />
+            )}
           </div>
+          {description && (
+            <p
+              className="mt-1 line-clamp-2 whitespace-pre-line break-words text-sm text-muted-foreground"
+              title={description}
+            >
+              {description}
+            </p>
+          )}
         </div>
 
         {showActions && (
@@ -329,11 +364,11 @@ const DAGHeader: React.FC<DAGHeaderProps> = ({
 
             <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
               <Calendar className="h-3 w-3" />
-              <span className="truncate">
-                {dagRunToDisplay?.startedAt
-                  ? dayjs(dagRunToDisplay.startedAt).format('MMM D, HH:mm:ss')
-                  : '--'}
-              </span>
+              <RelativeTime
+                className="truncate"
+                timestamp={dagRunToDisplay?.startedAt}
+                fallback="--"
+              />
             </span>
 
             <span className="flex items-center gap-1 text-xs text-muted-foreground">

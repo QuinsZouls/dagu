@@ -3,7 +3,7 @@
 
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { components } from '../../../api/v1/schema';
+import { components, Stream } from '../../../api/v1/schema';
 import { AppBarContext } from '../../../contexts/AppBarContext';
 import { RemoteNodeProvider } from '../../../contexts/RemoteNodeContext';
 import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext';
@@ -31,6 +31,14 @@ import {
   workspaceNameFromLabels,
 } from '../../../lib/workspace';
 import { I18nText } from '@/i18n/I18nText';
+import { I18nTemplate } from '@/i18n/I18nTemplate';
+import { useI18n } from '@/i18n/I18nProvider';
+import {
+  LoadErrorState,
+  NotFoundState,
+  PageLoading,
+} from '@/components/PageStates';
+import { isNotFoundQueryError } from '@/lib/queryErrors';
 
 type Params = {
   fileName: string;
@@ -45,9 +53,14 @@ function DAGDetails() {
   const navigate = useNavigate();
   const appBarContext = useContext(AppBarContext);
   const [searchParams] = useSearchParams();
+  const { ts } = useI18n();
 
   const dagRunId = searchParams.get('dagRunId');
   const stepName = searchParams.get('step');
+  const logStream =
+    searchParams.get('stream') === Stream.stderr
+      ? Stream.stderr
+      : Stream.stdout;
   const subDAGRunId = searchParams.get('subDAGRunId');
   const queriedDAGRunName = searchParams.get('dagRunName');
   const queryRemoteNode = searchParams.get('remoteNode')?.trim();
@@ -74,6 +87,7 @@ function DAGDetails() {
   const fileName = params.fileName || '';
 
   const dagSSE = useDAGSSE(fileName, !!fileName, remoteNode);
+  const { setTitle } = appBarContext;
 
   // Determine active tab
   const tab = params.tab === 'docs' ? 'wiki' : params.tab || 'status';
@@ -132,7 +146,11 @@ function DAGDetails() {
   }, [buildUrl, fileName, navigate, params.tab]);
 
   // Fetch DAG details — SWR is the single source of truth, refreshed by live invalidations
-  const { data: dagData, mutate: mutateDag } = useQuery(
+  const {
+    data: dagData,
+    error: dagError,
+    mutate: mutateDag,
+  } = useQuery(
     '/dags/{fileName}',
     {
       params: {
@@ -143,6 +161,11 @@ function DAGDetails() {
     sseFallbackOptions(dagSSE)
   );
   useSSECacheSync(dagSSE, mutateDag);
+  const dagTitle = dagData?.dag?.name || fileName;
+  useEffect(() => {
+    setTitle(dagTitle);
+  }, [dagTitle, setTitle]);
+
   const dagLabels = [
     ...(dagData?.dag?.labels ?? []),
     ...(dagData?.dag?.tags ?? []),
@@ -270,7 +293,33 @@ function DAGDetails() {
               setData: setRootDAGRunData,
             }}
           >
-            <div className="flex h-full min-h-0 w-full min-w-0 max-w-7xl flex-col">
+            <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
+              {!dagData?.dag &&
+                (dagError ? (
+                  isNotFoundQueryError(dagError) ? (
+                    <NotFoundState
+                      title={ts('Workflow not found')}
+                      description={
+                        <I18nTemplate
+                          text="No workflow named {name} exists. It may have been renamed or deleted."
+                          values={{ name: <code>{fileName}</code> }}
+                        />
+                      }
+                      action={{
+                        to: buildUrl('/dags'),
+                        label: ts('Back to Workflows'),
+                      }}
+                    />
+                  ) : (
+                    <LoadErrorState
+                      title={ts("Couldn't load this workflow")}
+                      error={dagError}
+                      onRetry={() => void mutateDag()}
+                    />
+                  )
+                ) : (
+                  <PageLoading />
+                ))}
               {dagData?.dag && dagMatchesWorkspace && (
                 <>
                   <DAGHeader
@@ -280,6 +329,7 @@ function DAGDetails() {
                     refreshFn={refreshData}
                     formatDuration={formatDuration}
                     buildScopedUrl={buildUrl}
+                    pinned={dagData.pinned}
                   />
                   <div className="min-h-0 flex-1">
                     <DAGDetailsContent
@@ -292,6 +342,7 @@ function DAGDetails() {
                       onTabChange={handleTabChange}
                       dagRunId={displayDAGRunId}
                       stepName={stepName}
+                      logStream={logStream}
                       isModal={false}
                       skipHeader={true}
                       localDags={dagData?.localDags}
@@ -305,7 +356,7 @@ function DAGDetails() {
               {dagData?.dag && !dagMatchesWorkspace && (
                 <div className="p-6 text-sm text-muted-foreground">
                   <I18nText
-                    text={'This DAG is not in the selected workspace.'}
+                    text={'This workflow is not in the selected workspace.'}
                   />
                 </div>
               )}

@@ -21,7 +21,14 @@ import {
 import dayjs from '@/lib/dayjs';
 import ActionButton from '@/components/ui/action-button';
 import StatusChip from '@/components/ui/status-chip';
-import { AlertTriangle, Ban, Play, RefreshCw, Square, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Ban,
+  CircleStop,
+  Play,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import React from 'react';
 import { components, Status } from '../../../../api/v1/schema';
 import { useCanManageProfiles } from '../../../../contexts/AuthContext';
@@ -249,17 +256,11 @@ function DAGActions({
   const hasWaitingApprovals = Boolean(waitingApprovalStepName);
   const terminateDetails = getDAGRunTerminateActionDetails(status, {
     copy: {
-      stopTooltipText: 'Stop DAG execution',
-      cancelTooltipText: 'Cancel auto-retry for this failed DAG execution',
-      stopConfirmText:
-        status?.name && status?.dagRunId
-          ? ts('Do you really want to stop the dag-run "{name}"?', {
-              name: status.name,
-            })
-          : 'Do you really want to cancel the DAG?',
+      stopTooltipText: 'Stop the latest run',
+      cancelTooltipText: 'Cancel auto-retry for the latest run',
+      stopConfirmText: ts('Running steps are canceled.'),
       cancelConfirmText: ts(
-        'Do you really want to cancel auto-retry for the dag-run "{name}"?',
-        { name: status?.name ?? '' }
+        'The failed run will not be retried automatically.'
       ),
     },
   });
@@ -305,6 +306,7 @@ function DAGActions({
           <TooltipTrigger asChild>
             <ActionButton
               label={displayMode !== 'compact'}
+              variant={displayMode !== 'compact' ? 'primary' : undefined}
               icon={<Play className="h-4 w-4" />}
               disabled={!buttonState['enqueue']}
               onClick={() => {
@@ -321,7 +323,7 @@ function DAGActions({
           </TooltipTrigger>
           <TooltipContent>
             <p>
-              <I18nText text={'Start DAG execution'} />
+              <I18nText text={'Start a new run'} />
             </p>
           </TooltipContent>
         </Tooltip>
@@ -341,7 +343,7 @@ function DAGActions({
             </TooltipTrigger>
             <TooltipContent>
               <p>
-                <I18nText text={'Reject DAG run'} />
+                <I18nText text={'Reject this run'} />
               </p>
             </TooltipContent>
           </Tooltip>
@@ -354,7 +356,7 @@ function DAGActions({
                   terminateAction === 'cancel' ? (
                     <X className="h-4 w-4" />
                   ) : (
-                    <Square className="h-4 w-4" />
+                    <CircleStop className="h-4 w-4" />
                   )
                 }
                 disabled={!buttonState['terminate']}
@@ -448,7 +450,7 @@ function DAGActions({
             </TooltipTrigger>
             <TooltipContent>
               <p>
-                <I18nText text={'Retry DAG execution'} />
+                <I18nText text={'Retry this run'} />
               </p>
             </TooltipContent>
           </Tooltip>
@@ -466,7 +468,13 @@ function DAGActions({
 
         <I18nProps>
           <ConfirmModal
-            title="Confirmation"
+            title={
+              terminateAction === 'cancel'
+                ? 'Cancel auto-retry?'
+                : stopAllRunning
+                  ? 'Stop all running instances?'
+                  : 'Stop this run?'
+            }
             buttonText={terminateDetails.buttonText}
             visible={isStopModal}
             dismissModal={() => {
@@ -542,7 +550,7 @@ function DAGActions({
                 {terminateAction === 'stop' && stopAllRunning ? (
                   <I18nText
                     text={
-                      'Do you really want to stop all running instances of this DAG?'
+                      'Running steps in every instance of this workflow are canceled.'
                     }
                   />
                 ) : (
@@ -551,14 +559,14 @@ function DAGActions({
               </p>
               {!stopAllRunning && status?.name && (
                 <I18nProps>
-                  <LabeledItem label="DAG-Run-Name">
+                  <LabeledItem label="Workflow">
                     <span className="font-mono text-sm">{status.name}</span>
                   </LabeledItem>
                 </I18nProps>
               )}
               {!stopAllRunning && status?.dagRunId && (
                 <I18nProps>
-                  <LabeledItem label="DAG-Run-ID">
+                  <LabeledItem label="Run ID">
                     <span className="font-mono text-sm">{status.dagRunId}</span>
                   </LabeledItem>
                 </I18nProps>
@@ -604,8 +612,8 @@ function DAGActions({
         </I18nProps>
         <I18nProps>
           <ConfirmModal
-            title={retryAsNew ? 'Reschedule DAG Run' : 'Confirmation'}
-            buttonText={retryAsNew ? 'Reschedule' : 'Rerun'}
+            title={retryAsNew ? 'Reschedule as a new run?' : 'Retry this run?'}
+            buttonText={retryAsNew ? 'Reschedule' : 'Retry'}
             visible={isRetryModal}
             dismissModal={() => {
               setIsRetryModal(false);
@@ -706,28 +714,15 @@ function DAGActions({
           >
             {/* Keep modal content structure */}
             <div className="space-y-3">
-              <p className="mb-2">
-                {status?.name && retryDagRunId ? (
-                  ts('Do you really want to retry the dag-run "{name}"?', {
-                    name: status.name,
-                  })
-                ) : (
-                  <I18nText
-                    text={
-                      'Do you really want to rerun the following execution?'
-                    }
-                  />
-                )}
-              </p>
               <I18nProps>
-                <LabeledItem label="DAG-Run-Name">
+                <LabeledItem label="Workflow">
                   <span className="font-mono text-sm">
                     {status?.name || 'N/A'}
                   </span>
                 </LabeledItem>
               </I18nProps>
               <I18nProps>
-                <LabeledItem label="DAG-Run-ID">
+                <LabeledItem label="Run ID">
                   <span className="font-mono text-sm">
                     {retryDagRunId || status?.dagRunId || 'N/A'}
                   </span>
@@ -766,7 +761,7 @@ function DAGActions({
                   htmlFor="reschedule-dag"
                   className="cursor-pointer text-sm"
                 >
-                  <I18nText text={'Reschedule with new DAG-run'} />
+                  <I18nText text={'Reschedule as a new run'} />
                 </Label>
               </div>
 
@@ -775,7 +770,7 @@ function DAGActions({
                 <div className="space-y-3 pt-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="new-dagrun-id-dag" className="text-sm">
-                      <I18nText text={'New DAG-Run ID (optional)'} />
+                      <I18nText text={'New run ID (optional)'} />
                     </Label>
                     <I18nProps>
                       <Input
@@ -929,7 +924,7 @@ function DAGActions({
         <I18nProps>
           <ConfirmModal
             title="Unsaved Changes"
-            buttonText="Run Anyway"
+            buttonText="Run anyway"
             visible={isUnsavedChangesModal}
             dismissModal={() => {
               setIsUnsavedChangesModal(false);

@@ -70,6 +70,25 @@ func TestValidateStep(t *testing.T) {
 			want: `ask.as "otp" collides with a variable`,
 		},
 		{
+			name: "client certificate",
+			with: `{"browser":{"client_certificates":[{"hosts":["portal.example.com","${HOST}"],"pfx_file":"client.p12","passphrase":"${PASS}"}]},"do":[{"act":"a"}]}`,
+		},
+		{
+			name: "client certificate without a file",
+			with: `{"browser":{"client_certificates":[{"hosts":["*"]}]},"do":[{"act":"a"}]}`,
+			want: "client_certificates[0]: set pfx_file, or cert_file and key_file",
+		},
+		{
+			name: "client certificate with an invalid host",
+			with: `{"browser":{"client_certificates":[{"hosts":["portal.example.com:443"],"pfx_file":"client.p12"}]},"do":[{"act":"a"}]}`,
+			want: "client_certificates[0]: host pattern",
+		},
+		{
+			name: "client certificate with no hosts",
+			with: `{"browser":{"client_certificates":[{"hosts":[],"pfx_file":"client.p12"}]},"do":[{"act":"a"}]}`,
+			want: "invalid browser config",
+		},
+		{
 			name: "invalid profile name",
 			with: `{"browser":{"profile":"../escape"},"do":[{"act":"a"}]}`,
 			want: `profile "../escape" must match`,
@@ -139,4 +158,27 @@ func TestValidateStepRequiresModel(t *testing.T) {
 		"do": []any{map[string]any{"act": "a"}},
 	}}})
 	assert.ErrorContains(t, err, "browser actions need a model")
+}
+
+// An operation reads back in the form it was written in, so operations a
+// browser session ran can be written into a step as they were given.
+func TestOperationsWriteBackAsWritten(t *testing.T) {
+	t.Parallel()
+
+	for _, written := range []string{
+		`{"act":"Click Sign in"}`,
+		`{"act":{"instruction":"Pick the newest invoice","cache":false}}`,
+		`{"expect":"The order list is shown"}`,
+		`{"expect":{"text":"Orders","within":"10s"}}`,
+		`{"act":"Click Next","when":{"selector":"button.next"},"timeout":"30s"}`,
+		`{"extract":{"instruction":"The order numbers","schema":{"type":"object","properties":{"numbers":{"type":"array"}}}}}`,
+		`{"when":"A cookie banner is shown","act":"Accept the cookies"}`,
+		`{"wait":{"duration":"2s"}}`,
+	} {
+		var op operation
+		require.NoError(t, json.Unmarshal([]byte(written), &op), written)
+		back, err := json.Marshal(op)
+		require.NoError(t, err)
+		assert.JSONEq(t, written, string(back))
+	}
 }

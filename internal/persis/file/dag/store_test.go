@@ -522,6 +522,22 @@ func TestGetSpecAllowsNestedPathsWithinConfiguredDirectories(t *testing.T) {
 	assert.Equal(t, dagContent, spec)
 }
 
+func TestGetSpecResolvesMixedCaseYAMLExtension(t *testing.T) {
+	baseDir := t.TempDir()
+
+	const dagContent = "name: mixed-dag\nsteps: []\n"
+	require.NoError(t, os.WriteFile(filepath.Join(baseDir, "MIXED.YAML"), []byte(dagContent), 0600))
+
+	store := newRepository(baseDir, WithSkipExamples(true))
+	spec, err := store.GetSpec(context.Background(), "MIXED.YAML")
+	require.NoError(t, err)
+	assert.Equal(t, dagContent, spec)
+
+	dag, err := store.GetMetadata(context.Background(), "MIXED.YAML")
+	require.NoError(t, err)
+	assert.Equal(t, "mixed-dag", dag.Name)
+}
+
 func TestGetSpecRejectsPathsOutsideConfiguredDirectories(t *testing.T) {
 	baseDir := t.TempDir()
 	outsideDir := t.TempDir()
@@ -1559,6 +1575,58 @@ steps:
 	indexInfoAfter, err := os.Stat(indexPath)
 	require.NoError(t, err)
 	require.True(t, indexInfoAfter.ModTime().After(indexInfoBefore.ModTime()))
+}
+
+// The base config may live inside the DAG directory; it applies to every DAG
+// but must not be listed as one.
+func TestListExcludesBaseConfigInDAGDir(t *testing.T) {
+	baseConfigYAML := []byte(`actions:
+  greet:
+    input_schema:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    template:
+      run: echo "{{ .input.message }}"
+`)
+	greetYAML := []byte(`steps:
+  - action: greet
+    with:
+      message: hello
+`)
+
+	for _, tc := range []struct {
+		name       string
+		recursive  bool
+		baseRelDir string
+	}{
+		{name: "Flat", baseRelDir: "."},
+		{name: "Recursive", recursive: true, baseRelDir: "shared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dagDir := t.TempDir()
+			baseConfig := filepath.Join(dagDir, tc.baseRelDir, "base.yaml")
+			require.NoError(t, os.MkdirAll(filepath.Dir(baseConfig), 0750))
+			require.NoError(t, os.WriteFile(baseConfig, baseConfigYAML, 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(dagDir, "greet.yaml"), greetYAML, 0600))
+
+			store := newRepository(
+				dagDir,
+				WithBaseConfig(baseConfig),
+				WithRecursiveDiscovery(tc.recursive),
+				WithSkipExamples(true),
+			)
+
+			result, errList, err := store.List(context.Background(), persis.DAGListOptions{})
+			require.NoError(t, err)
+			require.Empty(t, errList)
+			require.Len(t, result.Items, 1)
+			require.Equal(t, "greet", result.Items[0].Name)
+			require.Empty(t, result.Items[0].BuildErrors)
+		})
+	}
 }
 
 func TestListWithPagination(t *testing.T) {

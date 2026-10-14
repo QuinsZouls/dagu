@@ -16,7 +16,7 @@ import {
   Webhook,
 } from 'lucide-react';
 import React, { useState } from 'react';
-import { components } from '../../../../api/v1/schema';
+import { components, Stream } from '../../../../api/v1/schema';
 import { workspaceNameFromLabels } from '../../../../lib/workspace';
 import { DAGStatus } from '../../components';
 import { DAGContext } from '../../contexts/DAGContext';
@@ -48,6 +48,8 @@ type DAGDetailsContentProps = {
   onTabChange?: (tab: string) => void;
   dagRunId?: string;
   stepName?: string | null;
+  /** Stream shown by the full-page step log */
+  logStream?: Stream;
   isModal?: boolean;
   skipHeader?: boolean;
   localDags?: components['schemas']['LocalDag'][];
@@ -66,7 +68,14 @@ type DAGDetailsContentProps = {
   autoOpenStartModal?: boolean;
   buildScopedUrl?: (path: string) => string;
   fillHeight?: boolean;
+  /** Whether the DAG is pinned, shown in the header */
+  pinned?: boolean;
+  /** Called after the user pins or unpins the DAG */
+  onPinnedChange?: () => void;
 };
+
+// Form-like tabs keep a readable line length on wide screens.
+const FORM_TAB_MAX_WIDTH = 'w-full max-w-5xl';
 
 type LogViewerState = {
   isOpen: boolean;
@@ -84,6 +93,7 @@ const DAGDetailsContent: React.FC<DAGDetailsContentProps> = ({
   onTabChange,
   dagRunId = 'latest',
   stepName = null,
+  logStream = Stream.stdout,
   isModal = false,
   skipHeader = false,
   localDags,
@@ -93,6 +103,8 @@ const DAGDetailsContent: React.FC<DAGDetailsContentProps> = ({
   autoOpenStartModal = false,
   buildScopedUrl,
   fillHeight = false,
+  pinned,
+  onPinnedChange,
 }) => {
   const baseUrl = isModal ? '#' : `/dags/${fileName}`;
   const scopedUrl = React.useCallback(
@@ -159,6 +171,8 @@ const DAGDetailsContent: React.FC<DAGDetailsContentProps> = ({
             refreshFn={refreshFn}
             formatDuration={formatDuration}
             buildScopedUrl={buildScopedUrl}
+            pinned={pinned}
+            onPinnedChange={onPinnedChange}
           />
         )}
         <div className="mb-4 mt-3 flex min-w-0 flex-col items-center justify-between gap-3 lg:flex-row 2xl:gap-0">
@@ -547,25 +561,31 @@ const DAGDetailsContent: React.FC<DAGDetailsContentProps> = ({
           ) : null}
           {activeTab === 'settings' ? (
             <>
-              <DAGSettingsTab fileName={fileName || ''} />
+              <div className={FORM_TAB_MAX_WIDTH}>
+                <DAGSettingsTab fileName={fileName || ''} />
+              </div>
               <div className="h-6 flex-shrink-0" />
             </>
           ) : null}
           {activeTab === 'notifications' ? (
             <>
-              <NotificationsTab
-                fileName={fileName || ''}
-                workspaceName={dagWorkspaceName}
-              />
+              <div className={FORM_TAB_MAX_WIDTH}>
+                <NotificationsTab
+                  fileName={fileName || ''}
+                  workspaceName={dagWorkspaceName}
+                />
+              </div>
               <div className="h-6 flex-shrink-0" />
             </>
           ) : null}
           {activeTab === 'incidents' ? (
             <>
-              <IncidentsTab
-                fileName={fileName || ''}
-                workspaceName={dagWorkspaceName}
-              />
+              <div className={FORM_TAB_MAX_WIDTH}>
+                <IncidentsTab
+                  fileName={fileName || ''}
+                  workspaceName={dagWorkspaceName}
+                />
+              </div>
               <div className="h-6 flex-shrink-0" />
             </>
           ) : null}
@@ -591,6 +611,10 @@ const DAGDetailsContent: React.FC<DAGDetailsContentProps> = ({
               dagRunId={dagRunId}
               stepName={stepName}
               dagRun={currentDAGRun}
+              stream={logStream}
+              node={currentDAGRun?.nodes?.find(
+                (node) => node.step.name === stepName
+              )}
             />
           ) : null}
 
@@ -600,6 +624,7 @@ const DAGDetailsContent: React.FC<DAGDetailsContentProps> = ({
             onClose={closeLogViewer}
             logType={logViewer.logType}
             dagName={dag?.name || ''}
+            fileName={fileName}
             dagRunId={dagRunId}
             stepName={logViewer.stepName}
             isInModal={isModal}

@@ -16,6 +16,8 @@ import dayjs from '../../../lib/dayjs';
 import DAGRunDetailsModal from '../../dag-runs/components/dag-run-details/DAGRunDetailsModal';
 import type { StatusTab } from '../../dags/components/DAGStatus';
 import { I18nText } from '@/i18n/I18nText';
+import { useI18n } from '@/i18n/I18nProvider';
+import { legibleTimeAxis, type TimelineAxis } from '../lib/timelineAxis';
 
 type Props = {
   data: components['schemas']['DAGRunSummary'][];
@@ -35,6 +37,7 @@ type TimelineItem = {
 };
 
 function DashboardTimeChart({ data: input, selectedDate }: Props) {
+  const { ts } = useI18n();
   const timelineRef = useRef<HTMLDivElement>(null);
   const timelineInstance = useRef<Timeline | null>(null);
   const timelineItemsRef = useRef(new DataSet<TimelineItem>([]));
@@ -75,7 +78,10 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
       const rangeInHours = rangeInMinutes / 60;
       const rangeInDays = rangeInHours / 24;
 
-      let options = {};
+      let options: {
+        timeAxis?: TimelineAxis;
+        format?: object;
+      } = {};
 
       if (rangeInMinutes < 30) {
         // Less than 30 minutes - show 1-minute intervals
@@ -224,6 +230,13 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
         };
       }
 
+      if (options.timeAxis) {
+        options.timeAxis = legibleTimeAxis(
+          options.timeAxis,
+          rangeInMs,
+          timelineRef.current?.clientWidth ?? 0
+        );
+      }
       timeline.setOptions(options);
     } catch (error) {
       console.warn('Error updating time axis:', error);
@@ -322,7 +335,19 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
     // Initial update based on current view
     updateTimeAxisBasedOnZoom(timelineInstance.current);
 
+    // Label spacing depends on the width, so recompute it on resize.
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (timelineInstance.current) {
+              updateTimeAxisBasedOnZoom(timelineInstance.current);
+            }
+          });
+    resizeObserver?.observe(timelineRef.current);
+
     return () => {
+      resizeObserver?.disconnect();
       if (timelineInstance.current) {
         timelineInstance.current.off('rangechanged');
         timelineInstance.current.off('click');
@@ -525,7 +550,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
     <div className="w-full h-full flex flex-col bg-card overflow-hidden">
       {/* Toolbar */}
       <div className="flex justify-between items-center gap-2 px-3 py-1.5 bg-muted/30 flex-shrink-0">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        <span className="text-xs font-medium text-muted-foreground">
           <I18nText text={"Timeline"} />
         </span>
         <div className="flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5">
@@ -535,6 +560,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
                 variant="ghost"
                 size="icon"
                 onClick={handleCurrent}
+                aria-label={ts('Current time')}
                 className="h-7 w-7 rounded-sm"
               >
                 <Clock className="h-3.5 w-3.5" />
@@ -551,6 +577,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
                 variant="ghost"
                 size="icon"
                 onClick={handleFit}
+                aria-label={ts('Fit all')}
                 className="h-7 w-7 rounded-sm"
               >
                 <Maximize className="h-3.5 w-3.5" />
@@ -569,6 +596,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
                 variant="ghost"
                 size="icon"
                 onClick={handleZoomIn}
+                aria-label={ts('Zoom in')}
                 className="h-7 w-7 rounded-sm"
               >
                 <ZoomIn className="h-3.5 w-3.5" />
@@ -585,6 +613,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
                 variant="ghost"
                 size="icon"
                 onClick={handleZoomOut}
+                aria-label={ts('Zoom out')}
                 className="h-7 w-7 rounded-sm"
               >
                 <ZoomOut className="h-3.5 w-3.5" />
@@ -603,6 +632,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
                 variant="ghost"
                 size="icon"
                 onClick={handleReset}
+                aria-label={ts('Reset view')}
                 className="h-7 w-7 rounded-sm"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
@@ -634,10 +664,10 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
         {`
         .vis-timeline {
           font-family: var(--font-sans) !important;
-          font-size: 11px !important;
-          background-color: var(--background) !important;
+          font-size: 12px !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 12px !important;
+          border-radius: 10px !important;
           overflow: hidden !important;
         }
         .vis-timeline .vis-panel {
@@ -661,7 +691,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
           position: sticky;
           left: 0;
           z-index: 2;
-          background-color: var(--background) !important;
+          background-color: var(--card) !important;
           border-right: 1px solid var(--border) !important;
         }
         .vis-labelset .vis-label {
@@ -673,17 +703,17 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
           background-color: transparent !important;
         }
         .vis-background {
-          background-color: var(--background) !important;
+          background-color: var(--card) !important;
         }
         .vis-center {
-          background-color: var(--background) !important;
+          background-color: var(--card) !important;
         }
         .vis-time-axis {
           background-color: var(--card) !important;
           color: var(--foreground) !important;
         }
         .vis-time-axis .vis-text {
-          font-size: 10px !important;
+          font-size: 11px !important;
           color: var(--muted-foreground) !important;
           font-family: var(--font-sans) !important;
         }
@@ -705,7 +735,7 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
           transform: translateY(-50%) !important;
           top: 50% !important;
           white-space: nowrap !important;
-          font-size: 10px !important;
+          font-size: 11px !important;
           font-weight: 400 !important;
           color: var(--foreground) !important;
           writing-mode: horizontal-tb !important;
@@ -714,12 +744,11 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
         .vis-item {
           overflow: visible !important;
           height: 14px !important;
-          border-radius: 4px !important;
+          border-radius: 3px !important;
           border-width: 0 !important;
           cursor: pointer !important;
           transition: none !important;
           animation: none !important;
-          box-shadow: 0 0 10px rgba(0,0,0,0.3);
         }
         .vis-item,
         .vis-item * {
@@ -727,19 +756,15 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
           animation: none !important;
         }
         .vis-item:hover {
-          filter: brightness(1.2);
-          transform: scaleY(1.2);
+          filter: brightness(1.1);
           z-index: 100 !important;
         }
         .vis-item.vis-selected {
-          border-width: 1px !important;
-          border-color: var(--primary) !important;
-          box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.3);
+          box-shadow: 0 0 0 2px var(--card), 0 0 0 3px var(--primary);
         }
         .vis-current-time {
           background-color: var(--primary) !important;
-          width: 2px !important;
-          box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.4);
+          width: 1px !important;
         }
         /* Scrollbar styling for timeline */
         .vis-timeline::-webkit-scrollbar {
@@ -747,15 +772,15 @@ function DashboardTimeChart({ data: input, selectedDate }: Props) {
           height: 8px;
         }
         .vis-timeline::-webkit-scrollbar-track {
-          background: var(--background);
+          background: var(--card);
         }
         .vis-timeline::-webkit-scrollbar-thumb {
-          background: var(--muted);
+          background: var(--border);
           border-radius: 10px;
-          border: 2px solid var(--background);
+          border: 2px solid var(--card);
         }
         .vis-timeline::-webkit-scrollbar-thumb:hover {
-          background: var(--secondary);
+          background: var(--border-strong);
         }
         `}
       </style>

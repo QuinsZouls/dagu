@@ -10,6 +10,7 @@ import {
   getCoreRowModel,
   getExpandedRowModel,
   getFilteredRowModel,
+  Row,
   RowData,
   Updater,
   useReactTable,
@@ -21,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   PencilLine,
+  Pin,
   Search,
   Trash2,
 } from 'lucide-react';
@@ -35,7 +37,6 @@ import React, {
 import { Link, useNavigate } from 'react-router-dom';
 import { DAGNameInputModal } from '@/components/DAGNameInputModal';
 import { components, Status } from '../../../../api/v1/schema';
-import type { Config } from '../../../../contexts/ConfigContext';
 import dayjs from '../../../../lib/dayjs';
 import {
   getScheduleKey,
@@ -49,8 +50,7 @@ import VisuallyHidden from '@/components/ui/visually-hidden';
 import { CreateDAGModal, DAGPagination } from '../common';
 import DAGActions from '../common/DAGActions';
 import LiveSwitch from '../common/LiveSwitch';
-
-declare const getConfig: () => Config;
+import PinToggle from '../common/PinToggle';
 
 // Helper to format milliseconds into d/h/m/s
 function formatMs(ms: number): string {
@@ -127,6 +127,9 @@ interface DAGCardProps {
   canRenameDAGs: boolean;
   onRenameDAG: (dag: components['schemas']['DAGFile']) => void;
   onDeleteDAG: (dag: components['schemas']['DAGFile']) => void;
+  canPin: boolean;
+  isPinPending: boolean;
+  onTogglePin: (dag: components['schemas']['DAGFile']) => void;
   className?: string;
 }
 
@@ -141,7 +144,7 @@ function RenameDAGButton({
     <I18nProps>
       <Button
         type="button"
-        variant="secondary"
+        variant="ghost"
         size="icon-sm"
         aria-label={`Rename workflow ${dag.dag.name}`}
         title="Rename workflow"
@@ -164,9 +167,9 @@ function DeleteDAGButton({
     <I18nProps>
       <Button
         type="button"
-        variant="secondary"
+        variant="ghost"
         size="icon-sm"
-        className="text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+        className="hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
         aria-label={`Delete workflow ${dag.dag.name}`}
         title="Delete workflow"
         onClick={() => onDelete(dag)}
@@ -189,6 +192,9 @@ function DAGCard({
   canRenameDAGs,
   onRenameDAG,
   onDeleteDAG,
+  canPin,
+  isPinPending,
+  onTogglePin,
   className = '',
 }: DAGCardProps) {
   const fileName = dag.fileName;
@@ -237,9 +243,19 @@ function DAGCard({
             {title}
           </Link>
         </div>
-        <StatusChip status={status} size="xs">
-          {statusLabel}
-        </StatusChip>
+        <div className="flex flex-shrink-0 items-center gap-1">
+          <PinToggle
+            name={title}
+            pinned={dag.pinned}
+            canToggle={canPin}
+            pending={isPinPending}
+            onToggle={() => onTogglePin(dag)}
+            className="size-6"
+          />
+          <StatusChip status={status} size="xs">
+            {statusLabel}
+          </StatusChip>
+        </div>
       </div>
 
       {/* Description */}
@@ -255,7 +271,7 @@ function DAGCard({
           <Badge
             key={getScheduleKey(schedule, idx)}
             variant="outline"
-            className={`text-xs font-normal px-1 py-0 h-3 normal-case tracking-normal ${schedule.kind === 'at' ? 'border-0' : ''}`}
+            className={`h-[18px] rounded px-1.5 py-0 font-mono text-[11px] font-normal normal-case tracking-normal ${schedule.kind === 'at' ? 'border-0' : ''}`}
           >
             {getScheduleLabel(schedule)}
           </Badge>
@@ -309,13 +325,12 @@ function DAGCard({
               <Badge
                 key={label}
                 variant="outline"
-                className="text-xs px-1 py-0 h-3 rounded-sm border-primary/30 bg-primary/10 text-primary"
+                className="h-[18px] rounded border-transparent bg-muted px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
                   onLabelClick(label);
                 }}
               >
-                <div className="h-1 w-1 rounded-full bg-primary/70 mr-0.5"></div>
                 {label}
               </Badge>
             ))}
@@ -325,10 +340,10 @@ function DAGCard({
       {/* Actions row: LiveSwitch + DAGActions */}
       <div className="flex flex-wrap items-center justify-between gap-1 pt-1.5 border-t border-border/50 min-w-0">
         <div
-          className={`flex items-center gap-1 flex-shrink-0 min-w-0 ${!hasSchedule ? 'opacity-40 pointer-events-none' : ''}`}
+          className="flex items-center gap-1 flex-shrink-0 min-w-0"
           onClick={(e) => e.stopPropagation()}
         >
-          <LiveSwitch dag={dag} refresh={refreshFn} />
+          {hasSchedule && <LiveSwitch dag={dag} refresh={refreshFn} />}
           <span className="text-xs text-muted-foreground truncate">
             {dag.suspended ? (
               <I18nText text={'Suspended'} />
@@ -359,6 +374,31 @@ function DAGCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// Pinned DAGs lead the rows; the "Pinned" header and a divider frame them.
+function countLeadingPinnedRows(rows: Row<Data>[]): number {
+  let count = 0;
+  for (const row of rows) {
+    if (
+      row.depth !== 0 ||
+      row.original.kind !== ItemKind.DAG ||
+      !(row.original as DAGRow).dag.pinned
+    ) {
+      break;
+    }
+    count++;
+  }
+  return count;
+}
+
+function PinnedSectionLabel() {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+      <Pin className="h-3 w-3" aria-hidden="true" />
+      <I18nText text={'Pinned'} />
+    </span>
   );
 }
 
@@ -437,6 +477,10 @@ type Props = {
   onDeleteWorkflowView: (viewId: string) => Promise<void>;
   onDeleteDAGs: (fileNames: string[]) => Promise<DAGDeleteResult[]>;
   onRenameDAG: (fileName: string, newFileName: string) => Promise<void>;
+  /** Whether the current user can pin a workflow for everyone */
+  canPinDAG: (dag: components['schemas']['DAGFile']) => boolean;
+  /** Pins or unpins a workflow for all users */
+  onSetDAGPinned: (fileName: string, pinned: boolean) => Promise<void>;
   /** Total workflows matching the server-side filters */
   resultCount?: number;
   /** Currently selected DAG file name */
@@ -484,6 +528,9 @@ declare module '@tanstack/react-table' {
     onOpenRenameDAG?: (dag: components['schemas']['DAGFile']) => void;
     canDeleteDAGs?: boolean;
     onOpenDeleteDAG?: (dag: components['schemas']['DAGFile']) => void;
+    canPinDAG?: (dag: components['schemas']['DAGFile']) => boolean;
+    isPinPending?: (fileName: string) => boolean;
+    onTogglePin?: (dag: components['schemas']['DAGFile']) => void;
   }
 }
 
@@ -564,7 +611,7 @@ const defaultColumns = [
         )}
       </div>
     ),
-    cell: ({ row }) => {
+    cell: ({ row, table }) => {
       if (row.getCanExpand()) {
         return (
           <div
@@ -591,7 +638,23 @@ const defaultColumns = [
           </div>
         );
       }
-      return null;
+      if (row.original.kind !== ItemKind.DAG) {
+        return null;
+      }
+      const dag = (row.original as DAGRow).dag;
+      const meta = table.options.meta;
+      return (
+        <div className="flex min-h-[2.5rem] items-center justify-center">
+          <PinToggle
+            name={dag.dag.name}
+            pinned={dag.pinned}
+            canToggle={meta?.canPinDAG?.(dag) ?? false}
+            pending={meta?.isPinPending?.(dag.fileName)}
+            revealOnHover
+            onToggle={() => meta?.onTogglePin?.(dag)}
+          />
+        </div>
+      );
     },
     size: 32,
     minSize: 32,
@@ -600,14 +663,9 @@ const defaultColumns = [
   columnHelper.accessor('name', {
     id: 'Name',
     header: () => (
-      <div className="flex flex-col py-1">
-        <span className="text-xs">
-          <I18nText text={'Name'} />
-        </span>
-        <span className="text-xs font-normal text-muted-foreground">
-          <I18nText text={'Description'} />
-        </span>
-      </div>
+      <span className="text-xs">
+        <I18nText text={'Name'} />
+      </span>
     ),
     cell: ({ row, getValue, table }) => {
       const data = row.original!;
@@ -638,7 +696,7 @@ const defaultColumns = [
           >
             <Link
               to={`/dags/${data.dag.fileName}`}
-              className="block font-medium text-foreground tracking-tight text-xs truncate hover:underline"
+              className="block truncate text-sm font-medium text-foreground hover:underline"
               onClick={(event) => event.stopPropagation()}
             >
               {getValue()}
@@ -662,7 +720,7 @@ const defaultColumns = [
                       <Badge
                         key={label}
                         variant="outline"
-                        className="text-xs px-1 py-0 h-3.5 rounded-sm border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary transition-colors duration-200 cursor-pointer font-normal whitespace-normal break-words focus-visible:outline-none"
+                        className="h-[18px] gap-0.5 rounded border-transparent bg-muted px-1.5 py-0 text-[11px] font-normal text-muted-foreground transition-colors duration-150 cursor-pointer whitespace-normal break-words hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => {
@@ -682,10 +740,11 @@ const defaultColumns = [
                           if (handleLabelClick) handleLabelClick(label);
                         }}
                       >
-                        <div className="h-1 w-1 rounded-full bg-primary/70 mr-0.5"></div>
                         {value !== null ? (
                           <>
-                            <span className="font-medium">{key}</span>
+                            <span className="font-medium text-foreground/80">
+                              {key}
+                            </span>
                             <span className="opacity-60">=</span>
                             <span>{value}</span>
                           </>
@@ -755,14 +814,9 @@ const defaultColumns = [
     size: 80,
     minSize: 80,
     header: () => (
-      <div className="flex flex-col py-1">
-        <span className="text-xs">
-          <I18nText text={'Status'} />
-        </span>
-        <span className="text-xs font-normal text-muted-foreground">
-          <I18nText text={'Latest status'} />
-        </span>
-      </div>
+      <span className="text-xs">
+        <I18nText text={'Status'} />
+      </span>
     ),
     cell: ({ row }) => {
       // Use row
@@ -784,14 +838,9 @@ const defaultColumns = [
     size: 110,
     minSize: 90,
     header: () => (
-      <div className="flex flex-col py-1">
-        <span className="text-xs">
-          <I18nText text={'Last Run'} />
-        </span>
-        <span className="text-xs font-normal text-muted-foreground">
-          {getConfig().tz || <I18nText text={'Local Timezone'} />}
-        </span>
-      </div>
+      <span className="text-xs">
+        <I18nText text={'Last Run'} />
+      </span>
     ),
     cell: ({ row }) => {
       const data = row.original!;
@@ -846,14 +895,9 @@ const defaultColumns = [
     size: 140,
     minSize: 120,
     header: () => (
-      <div className="flex flex-col py-1">
-        <span className="text-xs">
-          <I18nText text={'Live / Schedule'} />
-        </span>
-        <span className="text-xs font-normal text-muted-foreground">
-          <I18nText text={'Toggle & next run'} />
-        </span>
-      </div>
+      <span className="text-xs">
+        <I18nText text={'Schedule'} />
+      </span>
     ),
     cell: ({ row, table }) => {
       const data = row.original!;
@@ -862,32 +906,22 @@ const defaultColumns = [
       }
 
       const schedules = data.dag.dag.schedule || [];
-      const hasSchedule = schedules.length > 0;
+      if (schedules.length === 0) {
+        return (
+          <span className="text-xs text-muted-foreground">
+            <I18nText text={'No schedule'} />
+          </span>
+        );
+      }
 
-      // LiveSwitch component
       const liveSwitch = (
         <div
           onClick={(e) => e.stopPropagation()}
-          className={`flex-shrink-0 p-0.5 ${!hasSchedule ? 'opacity-40 pointer-events-none' : ''}`}
+          className="flex-shrink-0 p-0.5"
         >
-          <LiveSwitch
-            dag={data.dag}
-            refresh={table.options.meta?.refreshFn}
-            aria-label={`Toggle ${data.name}`}
-          />
+          <LiveSwitch dag={data.dag} refresh={table.options.meta?.refreshFn} />
         </div>
       );
-
-      if (!hasSchedule) {
-        return (
-          <div className="flex items-center gap-2">
-            {liveSwitch}
-            <span className="text-xs text-muted-foreground">
-              <I18nText text={'No schedule'} />
-            </span>
-          </div>
-        );
-      }
 
       // Display schedule expressions
       const scheduleContent = (
@@ -896,7 +930,7 @@ const defaultColumns = [
             <Badge
               key={getScheduleKey(schedule, index)}
               variant="outline"
-              className="text-xs font-normal px-1 py-0 h-3.5 normal-case tracking-normal"
+              className="h-[18px] rounded px-1.5 py-0 font-mono text-[11px] font-normal normal-case tracking-normal"
             >
               {getScheduleLabel(schedule)}
             </Badge>
@@ -962,14 +996,9 @@ const defaultColumns = [
     minSize: 160,
     maxSize: 160,
     header: () => (
-      <div className="flex flex-col items-center py-1">
-        <span className="text-xs">
-          <I18nText text={'Actions'} />
-        </span>
-        <span className="text-xs font-normal text-muted-foreground">
-          <I18nText text={'Operations'} />
-        </span>
-      </div>
+      <span className="sr-only">
+        <I18nText text={'Actions'} />
+      </span>
     ),
     cell: ({ row, table }) => {
       // Use row and table
@@ -981,7 +1010,7 @@ const defaultColumns = [
       return (
         // Wrap DAGActions in a div and stop propagation on its click
         <div
-          className="flex items-center justify-center gap-1 scale-90" // Scale down for density
+          className="flex items-center justify-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 pointer-coarse:opacity-100"
           onClick={(e) => e.stopPropagation()}
         >
           <DAGActions
@@ -1212,6 +1241,8 @@ function DAGTable({
   onDeleteWorkflowView,
   onDeleteDAGs,
   onRenameDAG,
+  canPinDAG,
+  onSetDAGPinned,
   resultCount,
   selectedDAG = null,
   onSelectDAG,
@@ -1245,6 +1276,24 @@ function DAGTable({
   >(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [pendingPins, setPendingPins] = useState<Set<string>>(() => new Set());
+
+  const togglePin = useCallback(
+    async (dag: components['schemas']['DAGFile']) => {
+      const { fileName } = dag;
+      setPendingPins((current) => new Set(current).add(fileName));
+      try {
+        await onSetDAGPinned(fileName, !dag.pinned);
+      } finally {
+        setPendingPins((current) => {
+          const next = new Set(current);
+          next.delete(fileName);
+          return next;
+        });
+      }
+    },
+    [onSetDAGPinned]
+  );
   const [expanded, setExpanded] = useState<ExpandedState>(() => {
     try {
       const saved = localStorage.getItem('dagu_dag_table_expanded');
@@ -1522,7 +1571,8 @@ function DAGTable({
     [getSortValue, clientOrder]
   );
 
-  // Transform the flat list of DAGs into a hierarchical structure with groups
+  // Transform the flat list of DAGs into a hierarchical structure with groups.
+  // Pinned DAGs lead as flat rows, even when they belong to a group.
   const data = useMemo(() => {
     const sortedDags = [...dags];
 
@@ -1530,8 +1580,13 @@ function DAGTable({
       sortedDags.sort(compareDags);
     }
 
+    const pinnedRows: Data[] = sortedDags
+      .filter((dag) => dag.pinned)
+      .map((dag) => ({ kind: ItemKind.DAG, name: dag.dag.name, dag }));
+    const unpinnedDags = sortedDags.filter((dag) => !dag.pinned);
+
     const groups: { [key: string]: Data } = {};
-    sortedDags.forEach((dag) => {
+    unpinnedDags.forEach((dag) => {
       const groupName = dag.dag.group;
       if (groupName) {
         if (!groups[groupName]) {
@@ -1562,9 +1617,9 @@ function DAGTable({
       });
     }
 
-    const hierarchicalData: Data[] = Object.values(groups);
+    const hierarchicalData: Data[] = [...pinnedRows, ...Object.values(groups)];
     // Add DAGs without a group
-    sortedDags
+    unpinnedDags
       .filter((dag) => !dag.dag.group)
       .forEach((dag) => {
         hierarchicalData.push({
@@ -1649,10 +1704,14 @@ function DAGTable({
       onOpenRenameDAG: openRenameDAG,
       canDeleteDAGs,
       onOpenDeleteDAG: openDeleteDAG,
+      canPinDAG,
+      isPinPending: (fileName) => pendingPins.has(fileName),
+      onTogglePin: (dag) => void togglePin(dag),
     },
   });
 
   tableInstanceRef.current = instance as ReturnType<typeof useReactTable>;
+  const pinnedRowCount = countLeadingPinnedRows(instance.getRowModel().rows);
   const filteredDAGFileNames = new Set(getFilteredDAGFileNames());
   const selectedDAGsForDelete = dags.filter(
     (dag) =>
@@ -1705,7 +1764,7 @@ function DAGTable({
       {/* Search, Filter and Pagination Controls */}
       <div
         data-testid="workflow-controls"
-        className={`mb-3 space-y-3 rounded-lg border border-border bg-card/50 p-3 ${
+        className={`mb-4 space-y-2 ${
           isLoading ? 'opacity-70 pointer-events-none' : ''
         }`}
       >
@@ -1947,10 +2006,20 @@ function DAGTable({
             ))}
           </TableHeader>
           <TableBody>
+            {pinnedRowCount > 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={columns.length} className="px-2 pb-1 pt-2">
+                  <PinnedSectionLabel />
+                </TableCell>
+              </TableRow>
+            )}
             {instance.getRowModel().rows.length ? (
-              instance.getRowModel().rows.map((row) => {
+              instance.getRowModel().rows.map((row, index) => {
                 // For DAG rows, make the entire row clickable
                 const isDAGRow = row.original?.kind === ItemKind.DAG;
+                const endsPinnedSection =
+                  index === pinnedRowCount - 1 &&
+                  index < instance.getRowModel().rows.length - 1;
                 const isDeleteSelected =
                   isDAGRow &&
                   'dag' in row.original &&
@@ -1970,7 +2039,7 @@ function DAGTable({
                               (row.original as DAGRow).dag.fileName
                           ? 'cursor-pointer hover:bg-muted/50 shadow-[inset_3px_0_0_0_var(--primary)]'
                           : 'cursor-pointer hover:bg-muted/50'
-                    } ${isDAGRow && 'dag' in row.original && (row.original as DAGRow).dag.latestDAGRun?.status === Status.Running ? 'animate-running-row' : ''}`}
+                    } ${isDAGRow && 'dag' in row.original && (row.original as DAGRow).dag.latestDAGRun?.status === Status.Running ? 'animate-running-row' : ''} ${isDAGRow ? 'group/row' : ''} ${endsPinnedSection ? 'border-b-2' : ''}`}
                     onClick={(e) => {
                       // Handle group row clicks - toggle expanded state
                       if ((row.original as Data)?.kind === ItemKind.Group) {
@@ -2031,8 +2100,13 @@ function DAGTable({
         data-testid="workflow-card-view"
         className={`space-y-2 ${useCardView ? 'block' : 'md:hidden'}`}
       >
+        {pinnedRowCount > 0 && (
+          <div className="px-1">
+            <PinnedSectionLabel />
+          </div>
+        )}
         {instance.getRowModel().rows.length ? (
-          instance.getRowModel().rows.map((row) => {
+          instance.getRowModel().rows.map((row, index) => {
             // Render group rows with collapsible header
             if (row.original?.kind === ItemKind.Group) {
               const groupRow = row.original as GroupRow;
@@ -2053,7 +2127,7 @@ function DAGTable({
                           <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         )}
                       </div>
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate">
+                      <span className="text-xs font-semibold text-muted-foreground truncate">
                         {groupRow.name}
                       </span>
                     </div>
@@ -2090,6 +2164,11 @@ function DAGTable({
                               canRenameDAGs={canRenameDAGs}
                               onRenameDAG={openRenameDAG}
                               onDeleteDAG={openDeleteDAG}
+                              canPin={canPinDAG(dagRow.dag)}
+                              isPinPending={pendingPins.has(
+                                dagRow.dag.fileName
+                              )}
+                              onTogglePin={(dag) => void togglePin(dag)}
                               className="ml-2"
                             />
                           );
@@ -2110,21 +2189,31 @@ function DAGTable({
               row.depth === 0
             ) {
               const dagRow = row.original as DAGRow;
+              const endsPinnedSection =
+                index === pinnedRowCount - 1 &&
+                index < instance.getRowModel().rows.length - 1;
               return (
-                <DAGCard
-                  key={row.id}
-                  dag={dagRow.dag}
-                  isSelected={selectedDAG === dagRow.dag.fileName}
-                  onSelect={handleSelectDAG}
-                  onLabelClick={handleLabelClick}
-                  refreshFn={refreshFn}
-                  canDeleteDAGs={canDeleteDAGs}
-                  isDeleteSelected={deleteSelection.has(dagRow.dag.fileName)}
-                  onToggleDeleteSelection={toggleDeleteSelection}
-                  canRenameDAGs={canRenameDAGs}
-                  onRenameDAG={openRenameDAG}
-                  onDeleteDAG={openDeleteDAG}
-                />
+                <React.Fragment key={row.id}>
+                  <DAGCard
+                    dag={dagRow.dag}
+                    isSelected={selectedDAG === dagRow.dag.fileName}
+                    onSelect={handleSelectDAG}
+                    onLabelClick={handleLabelClick}
+                    refreshFn={refreshFn}
+                    canDeleteDAGs={canDeleteDAGs}
+                    isDeleteSelected={deleteSelection.has(dagRow.dag.fileName)}
+                    onToggleDeleteSelection={toggleDeleteSelection}
+                    canRenameDAGs={canRenameDAGs}
+                    onRenameDAG={openRenameDAG}
+                    onDeleteDAG={openDeleteDAG}
+                    canPin={canPinDAG(dagRow.dag)}
+                    isPinPending={pendingPins.has(dagRow.dag.fileName)}
+                    onTogglePin={(dag) => void togglePin(dag)}
+                  />
+                  {endsPinnedSection && (
+                    <div className="border-t-2 border-border" />
+                  )}
+                </React.Fragment>
               );
             }
 

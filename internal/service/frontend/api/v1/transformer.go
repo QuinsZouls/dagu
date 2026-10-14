@@ -142,6 +142,13 @@ func toStep(obj ir.Step) api.Step {
 	if len(obj.Dependencies) > 0 {
 		step.Dependencies = ptrOf(obj.Dependencies)
 	}
+	if len(obj.InferredDepends) > 0 {
+		inferred := make([]string, len(obj.InferredDepends))
+		for i, dep := range obj.InferredDepends {
+			inferred[i] = dep.Step
+		}
+		step.InferredDepends = &inferred
+	}
 	// Only authored declarations belong here. Names derived from a step's
 	// capture configuration are not published through DAGU_OUTPUT_FILE and are
 	// already visible in the field that configures them.
@@ -601,6 +608,7 @@ func toAgentSessionEvent(event ir.AgentSessionEvent) api.AgentSessionEvent {
 		Sequence: event.Sequence, Id: event.ID, Type: event.Type,
 		Timestamp: ptrOf(event.Timestamp), Role: ptrOf(event.Role), Content: ptrOf(event.Content),
 		Name: ptrOf(event.Name), Status: ptrOf(event.Status), Files: ptrOf(event.Files),
+		Position: ptrOf(event.Position), Via: ptrOf(event.Via), DurationMs: ptrOf(event.DurationMs), Tokens: ptrOf(event.Tokens),
 	}
 }
 

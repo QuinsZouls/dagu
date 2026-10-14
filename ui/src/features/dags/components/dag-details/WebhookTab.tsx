@@ -48,6 +48,7 @@ import { useRemoteNode } from '../../../../contexts/RemoteNodeContext';
 import { useClient } from '../../../../hooks/api';
 import dayjs from '../../../../lib/dayjs';
 import ConfirmModal from '@/components/ui/confirm-dialog';
+import { EmptyState } from '@/components/PageStates';
 import WebhookProfileSelectionCard from './WebhookProfileSelectionCard';
 import WebhookProfileTokensCard from './WebhookProfileTokensCard';
 import {
@@ -57,6 +58,7 @@ import {
 import { I18nText } from '@/i18n/I18nText';
 import { I18nProps } from '@/i18n/I18nProps';
 import { I18nTemplate } from '@/i18n/I18nTemplate';
+import { useI18n } from '@/i18n/I18nProvider';
 
 type WebhookDetails = components['schemas']['WebhookDetails'];
 type WebhookAuthMode = components['schemas']['WebhookAuthMode'];
@@ -114,6 +116,7 @@ function toHMACAuthMode(mode: WebhookAuthMode): WebhookHMACAuthMode {
 }
 
 function WebhookTab({ fileName }: WebhookTabProps) {
+  const { ts } = useI18n();
   const config = useConfig();
   const remoteNode = useRemoteNode();
   const client = useClient();
@@ -130,6 +133,9 @@ function WebhookTab({ fileName }: WebhookTabProps) {
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showToggleConfirm, setShowToggleConfirm] = useState(false);
+  const [pendingCredentialAction, setPendingCredentialAction] = useState<
+    'token' | 'hmac-secret' | 'hmac-disable' | null
+  >(null);
   const [pendingToggleState, setPendingToggleState] = useState<boolean | null>(
     null
   );
@@ -572,6 +578,8 @@ function WebhookTab({ fileName }: WebhookTabProps) {
             <Button
               variant="outline"
               size="icon"
+              aria-label={ts(copiedSecret ? 'Copied' : 'Copy')}
+              title={ts(copiedSecret ? 'Copied' : 'Copy')}
               onClick={() => handleCopy(secretReveal.value, setCopiedSecret)}
             >
               {copiedSecret ? (
@@ -592,34 +600,29 @@ function WebhookTab({ fileName }: WebhookTabProps) {
   // No webhook configured
   if (!webhook) {
     return (
-      <Card className="max-w-xl gap-0 py-0">
-        <CardHeader className="pb-2 px-4 pt-3">
-          <div className="flex items-center gap-2">
-            <WebhookOff className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-sm">
-              <I18nText text={'No Webhook Configured'} />
-            </CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            <I18nText text={'Create a webhook to trigger this DAG via HTTP'} />
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="px-4 pb-3 pt-3">
+      <EmptyState
+        icon={<WebhookOff />}
+        title={<I18nText text={'No webhook yet'} />}
+        description={
+          <I18nText
+            text={'Create a webhook to trigger this workflow over HTTP.'}
+          />
+        }
+        action={
           <Button
-            variant="default"
-            size="sm"
+            variant="primary"
             onClick={handleCreate}
             disabled={isActioning}
           >
             {isActioning ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Plus className="h-4 w-4 mr-1" />
+              <Plus className="h-4 w-4" />
             )}
-            <I18nText text={'Create Webhook'} />
+            <I18nText text={'Create webhook'} />
           </Button>
-        </CardContent>
-      </Card>
+        }
+      />
     );
   }
 
@@ -728,7 +731,7 @@ function WebhookTab({ fileName }: WebhookTabProps) {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleRegenerate}
+              onClick={() => setPendingCredentialAction('token')}
               disabled={isActioning}
             >
               {isActioning ? (
@@ -736,7 +739,7 @@ function WebhookTab({ fileName }: WebhookTabProps) {
               ) : (
                 <RefreshCw className="h-3.5 w-3.5 mr-1" />
               )}
-              <I18nText text={'Regenerate Token'} />
+              <I18nText text={'Regenerate token'} />
             </Button>
             <Button
               variant="outline"
@@ -882,7 +885,7 @@ function WebhookTab({ fileName }: WebhookTabProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleRegenerateHMAC}
+                  onClick={() => setPendingCredentialAction('hmac-secret')}
                   disabled={isActioning}
                 >
                   <I18nText text={'Regenerate HMAC Secret'} />
@@ -890,7 +893,7 @@ function WebhookTab({ fileName }: WebhookTabProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleDisableHMAC}
+                  onClick={() => setPendingCredentialAction('hmac-disable')}
                   disabled={isActioning}
                 >
                   <I18nText text={'Disable HMAC'} />
@@ -1139,6 +1142,47 @@ function WebhookTab({ fileName }: WebhookTabProps) {
             <I18nText
               text={
                 'Are you sure you want to delete this webhook? Any applications using this webhook token will immediately lose access.'
+              }
+            />
+          </p>
+        </ConfirmModal>
+      </I18nProps>
+
+      {/* Credential Change Confirmation Modal */}
+      <I18nProps>
+        <ConfirmModal
+          title={
+            pendingCredentialAction === 'token'
+              ? 'Regenerate token'
+              : pendingCredentialAction === 'hmac-secret'
+                ? 'Regenerate HMAC Secret'
+                : 'Disable HMAC'
+          }
+          buttonText={
+            pendingCredentialAction === 'hmac-disable' ? 'Disable' : 'Regenerate'
+          }
+          visible={pendingCredentialAction !== null}
+          dismissModal={() => setPendingCredentialAction(null)}
+          onSubmit={() => {
+            const action = pendingCredentialAction;
+            setPendingCredentialAction(null);
+            if (action === 'token') {
+              void handleRegenerate();
+            } else if (action === 'hmac-secret') {
+              void handleRegenerateHMAC();
+            } else if (action === 'hmac-disable') {
+              void handleDisableHMAC();
+            }
+          }}
+        >
+          <p>
+            <I18nText
+              text={
+                pendingCredentialAction === 'token'
+                  ? 'Callers using the current token lose access as soon as a new one is generated.'
+                  : pendingCredentialAction === 'hmac-secret'
+                    ? 'Requests signed with the current secret are rejected as soon as a new one is generated.'
+                    : 'The webhook will accept requests that carry only the token.'
               }
             />
           </p>

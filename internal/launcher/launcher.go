@@ -11,8 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"runtime/debug"
-	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dagucloud/dagu/v2/internal/cmn/runenv"
 
@@ -135,7 +135,7 @@ func (b *SubCmdBuilder) Start(dag *ir.DAG, opts StartOptions) CmdSpec {
 	args := []string{"start"}
 
 	if opts.Params != "" {
-		args = append(args, "-p", strconv.Quote(opts.Params))
+		args = append(args, "--params-stdin")
 	}
 	if opts.Quiet {
 		args = append(args, "-q")
@@ -183,6 +183,7 @@ func (b *SubCmdBuilder) Start(dag *ir.DAG, opts StartOptions) CmdSpec {
 	return CmdSpec{
 		Executable:      b.executable,
 		Args:            args,
+		Params:          opts.Params,
 		Env:             b.parentEnv(definitionIDEnv(opts.DefinitionID)...),
 		BuildEnv:        append([]string{}, dag.Env...),
 		RuntimeResolved: dag.RuntimeResolved,
@@ -194,7 +195,7 @@ func (b *SubCmdBuilder) Enqueue(dag *ir.DAG, opts EnqueueOptions) CmdSpec {
 	args := []string{"enqueue"}
 
 	if opts.Params != "" {
-		args = append(args, "-p", strconv.Quote(opts.Params))
+		args = append(args, "--params-stdin")
 	}
 	if opts.Quiet {
 		args = append(args, "-q")
@@ -234,6 +235,7 @@ func (b *SubCmdBuilder) Enqueue(dag *ir.DAG, opts EnqueueOptions) CmdSpec {
 	return CmdSpec{
 		Executable:      b.executable,
 		Args:            args,
+		Params:          opts.Params,
 		Env:             b.filteredEnv(definitionIDEnv(opts.DefinitionID)...),
 		BuildEnv:        append([]string{}, dag.Env...),
 		RuntimeResolved: dag.RuntimeResolved,
@@ -325,10 +327,16 @@ func (b *SubCmdBuilder) Retry(dag *ir.DAG, opts RetryOptions) CmdSpec {
 	return spec
 }
 
+// MaxParamsSize is the most bytes of params a started or enqueued run takes.
+const MaxParamsSize = 1 << 20
+
 // CmdSpec describes a command to be executed with all its configuration.
 type CmdSpec struct {
-	Executable      string
-	Args            []string
+	Executable string
+	Args       []string
+	// Params are the run's params, passed on the command's standard input
+	// so their size is not bound by the platform's command-line limit.
+	Params          string
 	Env             []string
 	BuildEnv        []string
 	RuntimeResolved bool
@@ -431,8 +439,8 @@ func Run(ctx context.Context, spec CmdSpec) error {
 func buildCommandError(err error, stdout, stderr *cappedBuffer) error {
 	return &CommandError{
 		Err:    err,
-		Stdout: strings.TrimSpace(stdout.String()),
-		Stderr: strings.TrimSpace(stderr.String()),
+		Stdout: strings.TrimSpace(strings.ToValidUTF8(stdout.String(), string(utf8.RuneError))),
+		Stderr: strings.TrimSpace(strings.ToValidUTF8(stderr.String(), string(utf8.RuneError))),
 	}
 }
 
@@ -510,6 +518,9 @@ func newCommand(ctx context.Context, spec CmdSpec, withContext bool) (*exec.Cmd,
 	}
 
 	cmdutil.SetupCommand(cmd)
+	if spec.Params != "" {
+		cmd.Stdin = strings.NewReader(spec.Params)
+	}
 	var env []string
 	if spec.Env != nil {
 		env = append([]string{}, spec.Env...)

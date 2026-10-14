@@ -100,13 +100,17 @@ function DAGEditButtons({ fileName, workspace }: Props) {
         <I18nText text={"Rename"} />
       </Button>
 
-      <Button variant="destructive" onClick={() => setIsDeleteModalOpen(true)}>
+      <Button
+        variant="ghost"
+        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+        onClick={() => setIsDeleteModalOpen(true)}
+      >
         <Trash2 className="h-4 w-4" />
         <I18nText text={"Delete"} />
       </Button>
 
       <I18nProps><ConfirmModal
-        title="Delete DAG"
+        title="Delete workflow"
         buttonText="Delete"
         visible={isDeleteModalOpen}
         dismissModal={() => {
@@ -154,7 +158,7 @@ function DAGEditButtons({ fileName, workspace }: Props) {
         }}
       >
         <div className="space-y-2 text-sm">
-          <p><I18nText text={"Do you really want to delete this DAG?"} /></p>
+          <p><I18nText text={"Do you really want to delete this workflow?"} /></p>
           <p className="font-mono text-xs">{fileName}</p>
           <p className="text-muted-foreground">
             <I18nText text={"The definition file is removed; past run history is kept. This action cannot be undone."} />

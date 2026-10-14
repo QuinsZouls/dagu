@@ -32,7 +32,8 @@ steps:
     action: computer.run
     with:
       mode: native
-      cache: true
+      ai: on_miss
+      find_within: 5s
       max_actions: 40
       on_confirmation: allow
       screenshots: each
@@ -45,11 +46,26 @@ steps:
           when: A login form is visible
         - act: {instruction: Open billing, cache: false, max_actions: 10}
           timeout: 2m
+        - act: {instruction: Save it, ai: never, find_within: "0"}
+        - act:
+            instruction: Submit
+            recorded:
+              windows:
+                - click: {app: expense, role: button, name: 保存}
+                - key: enter
+                  focus: {app: expense, role: text_field, id: amountBox}
         - ask: {prompt: Enter the code, as: otp, timeout: 10m}
         - expect: The invoice is posted
         - expect: {statement: A document number is shown, within: 30s}
+        - expect: {text: Posted, within: 10s}
+        - expect: {window: "経費精算*"}
+        - wait: 1s
+          when: {element: {role: button, name: 保存, in: {role: group, name: 支払情報}}}
+        - wait: 1s
+          when: {element: {role: text_field, near: {label: 金額, side: right}, nth: 0}}
         - extract:
             instruction: The document number
+            ai: every_run
             schema: {type: object, properties: {doc: {type: string}}}
         - wait: 2s
         - screenshot: posted
@@ -62,10 +78,20 @@ steps:
 		{"two operations in one item", "        - screenshot: posted", "        - {screenshot: posted, wait: 1s}"},
 		{"browser operation", "        - wait: 2s", "        - goto: https://example.com"},
 		{"unknown mode", "mode: native", "mode: fast"},
+		{"unknown ai", "ai: on_miss", "ai: sometimes"},
+		{"unknown ai on act", "ai: never", "ai: always"},
 		{"unknown confirmation policy", "on_confirmation: allow", "on_confirmation: ask"},
 		{"zero max actions", "max_actions: 40", "max_actions: 0"},
 		{"launch without command", "{command: open, args: [-a, TextEdit]}", "{args: [-a, TextEdit]}"},
-		{"condition check field", "{statement: A document number is shown, within: 30s}", "{text: Posted}"},
+		{"two check keys", "{text: Posted, within: 10s}", "{text: Posted, window: App}"},
+		{"statement and text", "{statement: A document number is shown, within: 30s}", "{statement: Shown, text: Posted}"},
+		{"only within", "{text: Posted, within: 10s}", "{within: 10s}"},
+		{"element without role", "{role: button, name: 保存, in: {role: group, name: 支払情報}}", "{name: 保存}"},
+		{"container without role", "in: {role: group, name: 支払情報}", "in: {name: 支払情報}"},
+		{"element role alone", "{role: text_field, near: {label: 金額, side: right}, nth: 0}", "{role: text_field}"},
+		{"unknown selector key", "{role: button, name: 保存, in: {role: group, name: 支払情報}}", "{role: button, title: 保存}"},
+		{"bad side", "side: right", "side: beside"},
+		{"focus without key", "                - key: enter\n", "                - click: {role: button, name: OK}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := mustParseYAMLDocument(t, strings.Replace(source, tc.from, tc.to, 1))

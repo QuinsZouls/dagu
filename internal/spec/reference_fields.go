@@ -27,14 +27,21 @@ type ReferenceField struct {
 	// "handler_on.exit". It is empty for ir.DAG-level fields.
 	OwnerStepPath string
 	Field         cmnvalue.Field
+	// topLevelStepIndex is the index into DAG.Steps of the top-level step that
+	// owns the field, including fields of foreach body steps. It is -1 for
+	// DAG-level and handler fields.
+	topLevelStepIndex int
 }
 
 type referenceFieldWalker struct {
 	fields []ReferenceField
+	// topLevelStepIndex is stamped on every field added while walking a
+	// top-level step and its foreach bodies.
+	topLevelStepIndex int
 }
 
 func ReferenceFields(dag *ir.DAG) []ReferenceField {
-	var w referenceFieldWalker
+	w := referenceFieldWalker{topLevelStepIndex: -1}
 	w.walkDAG(dag)
 	return w.fields
 }
@@ -43,6 +50,7 @@ func (w *referenceFieldWalker) add(field ReferenceField) {
 	if field.Value == "" {
 		return
 	}
+	field.topLevelStepIndex = w.topLevelStepIndex
 	w.fields = append(w.fields, field)
 }
 
@@ -74,8 +82,10 @@ func (w *referenceFieldWalker) walkDAG(dag *ir.DAG) {
 	w.walkSSH("ssh", dag.SSH, root)
 
 	for i := range dag.Steps {
+		w.topLevelStepIndex = i
 		w.walkStep(fmt.Sprintf("steps[%d]", i), dag.Steps[i])
 	}
+	w.topLevelStepIndex = -1
 	w.walkHandlerStep("handler_on.init", dag.HandlerOn.Init)
 	w.walkHandlerStep("handler_on.success", dag.HandlerOn.Success)
 	w.walkHandlerStep("handler_on.failure", dag.HandlerOn.Failure)
@@ -180,7 +190,7 @@ func (w *referenceFieldWalker) walkStepCommands(path string, step ir.Step, base 
 }
 
 func scriptReferenceField(path string, step ir.Step, command cmnvalue.CommandContext) cmnvalue.Field {
-	if step.ExecutorConfig.Type == "template" {
+	if step.ExecutorConfig.IsVerbatimScript() {
 		return cmnvalue.TemplateScriptField(path)
 	}
 	if step.ExecutorConfig.IsCommand() {

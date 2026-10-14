@@ -1,4 +1,10 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { writeLocalStorage } from '@/lib/local-storage-migration';
 
 export type DAGRunsViewMode = 'list' | 'grouped';
@@ -6,17 +12,23 @@ export type Locale = 'en' | 'zh-CN' | 'ja';
 
 export type WikiSortField = 'name' | 'type' | 'mtime';
 export type WikiSortOrder = 'asc' | 'desc';
+/** Which panes the DAG spec tab shows: the preview, the YAML, or both. */
+export type SpecViewMode = 'graph' | 'yaml' | 'split';
+/** The chosen color theme; `system` follows the operating system. */
+export type ThemePreference = 'light' | 'dark' | 'system';
+export type ResolvedTheme = 'light' | 'dark';
 
 export type UserPreferences = {
   pageLimit: number;
   dagRunsViewMode: DAGRunsViewMode;
   logWrap: boolean;
-  theme: 'light' | 'dark';
+  theme: ThemePreference;
   locale: Locale;
   safeMode: boolean;
   wikiSortField: WikiSortField;
   wikiSortOrder: WikiSortOrder;
   pinnedViewOrder: Record<string, string[]>;
+  specViewMode: SpecViewMode;
 };
 
 const UserPreferencesContext = createContext<{
@@ -31,12 +43,13 @@ const defaultPreferences: UserPreferences = {
   pageLimit: 50,
   dagRunsViewMode: 'list',
   logWrap: true,
-  theme: 'light', // Default to light theme (from main branch)
+  theme: 'system',
   locale: 'en',
   safeMode: false,
   wikiSortField: 'type',
   wikiSortOrder: 'asc',
   pinnedViewOrder: {},
+  specViewMode: 'split',
 };
 
 function isWikiSortField(value: unknown): value is WikiSortField {
@@ -49,6 +62,14 @@ function isWikiSortOrder(value: unknown): value is WikiSortOrder {
 
 function isLocale(value: unknown): value is Locale {
   return value === 'en' || value === 'zh-CN' || value === 'ja';
+}
+
+function isThemePreference(value: unknown): value is ThemePreference {
+  return value === 'light' || value === 'dark' || value === 'system';
+}
+
+function isSpecViewMode(value: unknown): value is SpecViewMode {
+  return value === 'graph' || value === 'yaml' || value === 'split';
 }
 
 function loadPreferences(): UserPreferences {
@@ -75,6 +96,12 @@ function loadPreferences(): UserPreferences {
         : isWikiSortOrder(preferences.docSortOrder)
           ? preferences.docSortOrder
           : defaultPreferences.wikiSortOrder,
+      specViewMode: isSpecViewMode(preferences.specViewMode)
+        ? preferences.specViewMode
+        : defaultPreferences.specViewMode,
+      theme: isThemePreference(preferences.theme)
+        ? preferences.theme
+        : defaultPreferences.theme,
     } as UserPreferences;
     writeLocalStorage(
       'user_preferences',
@@ -114,4 +141,33 @@ export function UserPreferencesProvider({
 
 export function useUserPreferences() {
   return useContext(UserPreferencesContext);
+}
+
+const DARK_COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)';
+
+function subscribeToColorScheme(onChange: () => void): () => void {
+  const query = window.matchMedia?.(DARK_COLOR_SCHEME_QUERY);
+  query?.addEventListener('change', onChange);
+  return () => query?.removeEventListener('change', onChange);
+}
+
+function systemPrefersDark(): boolean {
+  return window.matchMedia?.(DARK_COLOR_SCHEME_QUERY).matches ?? false;
+}
+
+/**
+ * Returns the theme in effect: the user's choice, or the operating system's
+ * setting when the choice is `system`. Updates when either changes.
+ */
+export function useResolvedTheme(): ResolvedTheme {
+  const { preferences } = useUserPreferences();
+  const prefersDark = useSyncExternalStore(
+    subscribeToColorScheme,
+    systemPrefersDark,
+    () => false
+  );
+  if (preferences.theme === 'system') {
+    return prefersDark ? 'dark' : 'light';
+  }
+  return preferences.theme;
 }

@@ -139,10 +139,10 @@ export default function APIKeysPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 max-w-7xl">
+    <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">
+          <h1 className="text-2xl font-semibold tracking-[-0.01em]">
             <I18nText text={'API Keys'} />
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -152,6 +152,7 @@ export default function APIKeysPage() {
         <Button
           onClick={() => setShowCreateModal(true)}
           size="sm"
+          variant="primary"
           className="h-8"
         >
           <Plus className="h-4 w-4 mr-1.5" />
@@ -190,7 +191,11 @@ export default function APIKeysPage() {
               <TableHead className="w-[180px]">
                 <I18nText text={'Last Used'} />
               </TableHead>
-              <TableHead className="w-[80px]"></TableHead>
+              <TableHead className="w-[80px]">
+                <span className="sr-only">
+                  <I18nText text={'Actions'} />
+                </span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

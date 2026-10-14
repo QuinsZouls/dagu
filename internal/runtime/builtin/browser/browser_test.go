@@ -43,6 +43,10 @@ type testRun struct {
 	secrets   map[string]string
 	// noSandbox is the host's setting that turns off the browser sandbox.
 	noSandbox bool
+	// hostCertificates are the client certificates the host config names.
+	hostCertificates []cmnconfig.BrowserClientCertificate
+	// hostGuard is the host config's guard_client_certificates.
+	hostGuard *bool
 }
 
 func newTestRun(t *testing.T, answer func(*llmpkg.ChatRequest) (string, error)) *testRun {
@@ -98,7 +102,7 @@ func (r *testRun) context() context.Context {
 	}
 	ctx := cmnconfig.WithConfig(r.t.Context(), &cmnconfig.Config{
 		Paths:   cmnconfig.PathsConfig{DataDir: r.dataDir},
-		Browser: cmnconfig.BrowserConfig{NoSandbox: r.noSandbox},
+		Browser: cmnconfig.BrowserConfig{NoSandbox: r.noSandbox, ClientCertificates: r.hostCertificates, GuardClientCertificates: r.hostGuard},
 	})
 	return runtime.WithEnv(ctx, runtime.Env{
 		Context: runtime.Context{
@@ -329,6 +333,21 @@ func TestActLosingPageKeepingDocumentRunsAgain(t *testing.T) {
 		require.NoError(t, execution.err)
 		assert.Contains(t, execution.stderr.String(), "running it again")
 	}
+}
+
+// An act that lost its script context while the page kept its document lost
+// it to a frame that loaded a new document, which the act may have caused,
+// so the step fails instead of acting again.
+func TestActLosingContextKeepingDocumentFails(t *testing.T) {
+	t.Parallel()
+
+	run := newTestRun(t, pageModel(nil))
+	run.engine.actLosesPage = 1
+	run.engine.pageLoss = errFakeContextLost
+	execution := run.execute(`{"url": "https://shop.example.com/login", "do": [{"act": "Click the sign-in button"}]}`, nil)
+
+	require.ErrorContains(t, execution.err, "do[0] act failed: "+errPageContextLost.Error())
+	assert.Len(t, run.engine.actInstructions(), 1, "no second act")
 }
 
 func TestSecretInInstructionIsRejected(t *testing.T) {
@@ -581,6 +600,24 @@ func TestReplayLosingPageKeepingDocumentAsksModel(t *testing.T) {
 	assert.Equal(t, []string{"goto:completed", "act:healed"}, eventNames(replayed.exec.GetAgentSession()))
 }
 
+// A replayed action that lost its script context while the page kept its
+// document may have taken effect in a frame, so the step fails instead of
+// asking the model to act again.
+func TestReplayLosingContextKeepingDocumentFails(t *testing.T) {
+	t.Parallel()
+
+	const steps = `{"url": "https://shop.example.com/login", "do": [{"act": "Click the sign-in button"}]}`
+	run := newTestRun(t, pageModel(nil))
+	require.NoError(t, run.execute(steps, nil).err)
+
+	run.engine.replayLosesPage = 1
+	run.engine.pageLoss = errFakeContextLost
+	replayed := run.execute(steps, nil)
+
+	require.ErrorContains(t, replayed.err, "do[0] act failed: "+errPageContextLost.Error())
+	assert.Len(t, run.engine.actInstructions(), 1, "the model does not act again")
+}
+
 // A replay can miss after an earlier recorded action loaded a new document.
 // The model's act is then judged by that document: judged by the one from
 // before the replay, an act that lost the page without taking effect would
@@ -619,6 +656,10 @@ func TestAskWaitsAndResumesSameBrowser(t *testing.T) {
 	t.Parallel()
 
 	run := newTestRun(t, pageModel(map[string]string{"The account name": `{"account":"acme"}`}))
+	// The resumed step closes the browser's whole process tree, which only
+	// the browser's process identifies.
+	run.engine.handle.BrowserPID = 4242
+	run.engine.handle.BrowserStartedAt = 1_700_000_000_000
 	waiting := run.execute(loginSteps, nil)
 	require.NoError(t, waiting.err)
 
@@ -1075,4 +1116,42 @@ func TestFixedWhenWaitsWithin(t *testing.T) {
 	]}`, nil)
 	require.NoError(t, execution.err)
 	assert.Equal(t, []string{"Open the code form"}, run.engine.actInstructions())
+}
+
+// A step fails at once when a browser session keeps its profile's browser
+// open, naming the session and how to close it, rather than starting a
+// second browser on the same profile.
+func TestProfileHeldByBrowserSessionFailsStep(t *testing.T) {
+	t.Parallel()
+
+	run := newTestRun(t, pageModel(nil))
+	sessions := browserhost.NewInteractiveStore(filepath.Join(run.dataDir, browserhost.DataDirName))
+	require.NoError(t, sessions.Save(browserhost.Record{
+		ID: "ab2cd3ef4g", State: browserhost.StateInteractive, Profile: "shop", Deadline: time.Now().Add(time.Hour),
+	}))
+
+	execution := run.execute(`{"browser":{"profile":"shop"},"do":[{"goto":"https://shop.example.com"}]}`, nil)
+	require.Error(t, execution.err)
+	assert.Contains(t, execution.err.Error(), `browser profile "shop" is held by browser session ab2cd3ef4g; close it with "dagu browser session close ab2cd3ef4g"`)
+	assert.Empty(t, run.launcher.launches)
+}
+
+// Taking a profile without waiting fails at once while a running step uses
+// it, and succeeds once the step is done with it.
+func TestProfileWithoutWaiting(t *testing.T) {
+	t.Parallel()
+
+	browserDir := t.TempDir()
+	step, err := acquireProfile(t.Context(), browserDir, "shop", "step-record", true)
+	require.NoError(t, err)
+
+	_, err = acquireProfile(t.Context(), browserDir, "shop", "ab2cd3ef4g", false)
+	var held *profileHeldError
+	require.ErrorAs(t, err, &held)
+	assert.Equal(t, `browser profile "shop" is in use by a running browser step`, err.Error())
+
+	step.release()
+	session, err := acquireProfile(t.Context(), browserDir, "shop", "ab2cd3ef4g", false)
+	require.NoError(t, err)
+	session.release()
 }

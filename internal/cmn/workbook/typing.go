@@ -6,13 +6,13 @@ package workbook
 import (
 	"fmt"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/xuri/excelize/v2"
+	"golang.org/x/text/width"
 )
 
 // ColumnType pins how a column's cells are typed.
@@ -191,6 +191,17 @@ func trimSpace(s string) string {
 	return strings.TrimFunc(s, unicode.IsSpace)
 }
 
+// foldWidth reads full-width digits, letters, and punctuation as their
+// ASCII forms, the way a form filled on a Japanese keyboard writes them,
+// and the minus sign U+2212 as a hyphen, and drops surrounding white
+// space. It serves the pinned types only; a cell read as text keeps what
+// it holds.
+func foldWidth(s string) string {
+	s = width.Fold.String(s)
+	s = strings.ReplaceAll(s, "−", "-")
+	return strings.TrimSpace(s)
+}
+
 // numericText returns the number a string denotes when it is written the
 // canonical way: an optional leading minus, digits with no leading zero
 // unless the integer part is 0, and an optional fraction of one or more
@@ -238,6 +249,15 @@ func numericText(s string) any {
 	return f
 }
 
+// CoerceValue applies a column type to a value read from anywhere, such as
+// the text of a desktop element: a string is trimmed, a number loses its
+// grouping and currency symbols and folds full-width digits, an integer
+// must be whole, and a boolean reads a word or a mark. It is coerce without
+// a date epoch, for callers outside a workbook.
+func CoerceValue(v any, t ColumnType) (any, error) {
+	return coerce(v, t, false)
+}
+
 // coerce applies a pinned column type to a typed cell value. date1904 says
 // which epoch a numeric date serial counts from.
 func coerce(v any, t ColumnType, date1904 bool) (any, error) {
@@ -248,13 +268,13 @@ func coerce(v any, t ColumnType, date1904 bool) (any, error) {
 	case TypeString:
 		return valueString(v), nil
 	case TypeNumber:
-		f, ok := toFloat(v)
+		f, ok := toNumber(v)
 		if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
 			return nil, fmt.Errorf("expected number, found %s", describe(v))
 		}
 		return numberValue(f), nil
 	case TypeInteger:
-		f, ok := toFloat(v)
+		f, ok := toNumber(v)
 		if !ok || f != math.Trunc(f) || f < -math.Exp2(63) || f >= math.Exp2(63) {
 			return nil, fmt.Errorf("expected integer, found %s", describe(v))
 		}
@@ -264,11 +284,8 @@ func coerce(v any, t ColumnType, date1904 bool) (any, error) {
 		case bool:
 			return x, nil
 		case string:
-			switch strings.ToLower(strings.TrimSpace(x)) {
-			case "true", "yes", "1":
-				return true, nil
-			case "false", "no", "0":
-				return false, nil
+			if b, ok := parseBooleanText(x); ok {
+				return b, nil
 			}
 		case int64:
 			if x == 0 || x == 1 {
@@ -338,20 +355,30 @@ var timeLayouts = []string{
 	dateLayout, "2006/01/02", "2006/1/2", "2006-1-2",
 }
 
-// toTime reads a time from a time, an ISO, slash-separated, kanji, or era
-// date string, or a date serial counted from the 1900 or 1904 epoch.
+// toNumber reads a pinned number: a text cell the way a form writes it,
+// as parseNumberText reads it, and anything else as toFloat does.
+func toNumber(v any) (float64, bool) {
+	if s, ok := v.(string); ok {
+		return parseNumberText(s)
+	}
+	return toFloat(v)
+}
+
+// toTime reads a time from a time, an ISO or slash-separated date string,
+// a date the way a Japanese form writes it, or a date serial counted from
+// the 1900 or 1904 epoch.
 func toTime(v any, date1904 bool) (time.Time, bool) {
 	switch x := v.(type) {
 	case time.Time:
 		return x, true
 	case string:
 		s := foldWidth(x)
-		for _, layout := range slices.Concat(timeLayouts, japaneseLayouts) {
+		for _, layout := range timeLayouts {
 			if t, err := time.Parse(layout, s); err == nil {
 				return t, true
 			}
 		}
-		return parseEraDate(s)
+		return parseDateText(s)
 	case int64, float64, int:
 		f, _ := toFloat(v)
 		t, err := excelize.ExcelDateToTime(f, date1904)

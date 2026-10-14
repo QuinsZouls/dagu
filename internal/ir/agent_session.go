@@ -87,6 +87,17 @@ type AgentSessionEvent struct {
 	Name      string   `json:"name,omitempty"`
 	Status    string   `json:"status,omitempty"`
 	Files     []string `json:"files,omitempty"`
+	// Position is the operation's place in with.do, from 1, as the run
+	// log counts; 0 for an event that is not one operation.
+	Position int `json:"position,omitempty"`
+	// Via is how an operation ran: "element" when a recording was replayed
+	// by the window's elements, "screen" when it was replayed by the
+	// pixels of the screen, "model", or "exact" for a check that read the
+	// window's elements without a model.
+	Via string `json:"via,omitempty"`
+	// DurationMs and Tokens are what the operation took.
+	DurationMs int64 `json:"durationMs,omitempty"`
+	Tokens     int64 `json:"tokens,omitempty"`
 }
 
 // AgentUsage contains aggregate model usage for a managed session.

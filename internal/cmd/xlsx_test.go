@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/dagucloud/dagu/v2/internal/cmn/workbook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xuri/excelize/v2"
 )
 
 func writeTestWorkbook(t *testing.T) string {
@@ -56,6 +58,8 @@ func TestXlsxInspectJSON(t *testing.T) {
 	assert.Equal(t, "number", info.Sheets[0].Types["Amount"])
 	assert.Equal(t, "date", info.Sheets[0].Types["Due"])
 	assert.Equal(t, 2, info.Sheets[0].RowCount)
+	require.Len(t, info.Sheets[0].Columns, 3)
+	assert.Equal(t, workbook.ColumnInfo{Name: "Due", Type: "date", Filled: 2, Distinct: 2, Min: "2026-10-01", Max: "2026-10-02"}, info.Sheets[0].Columns[2])
 	require.Len(t, info.Sheets[0].Sample, 1)
 	assert.Equal(t, "INV-1", info.Sheets[0].Sample[0]["Invoice No"])
 }
@@ -67,11 +71,54 @@ func TestXlsxInspectText(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "orders.xlsx: 1 sheets, 1900 date system")
 	assert.Contains(t, out, `Sheet "Orders": used A1:C3, table Orders!A1:C3, header row 1, 2 rows`)
-	assert.Contains(t, out, "Columns: Invoice No (string), Amount (number), Due (date)")
+	assert.Contains(t, out, "Columns: Invoice No (string), Amount (number; 10..20.5), Due (date; 2026-10-01..2026-10-02)")
 	assert.Contains(t, out, "Row 2: Invoice No=INV-1  Amount=10  Due=2026-10-01")
 
 	_, err = runXlsx(t, "inspect", path, "--sheet", "Nope")
 	require.ErrorContains(t, err, `sheet "Nope" not found; sheets present: Orders`)
+}
+
+func TestXlsxInspectTextProfile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "status.xlsx")
+	table := workbook.Table{
+		Columns: []string{"Status", "Qty"},
+		Rows:    [][]any{{"済", int64(1)}, {"未", int64(2)}, {"済", "未定"}, {nil, int64(4)}},
+	}
+	_, err := workbook.Write(context.Background(), path, table, workbook.WriteOptions{Header: true})
+	require.NoError(t, err)
+
+	out, err := runXlsx(t, "inspect", path)
+	require.NoError(t, err)
+	assert.Contains(t, out, `Columns: Status (string: 済, 未; 1 blank), Qty (integer; 1..4; 1 odd: B4 "未定")`)
+}
+
+func TestXlsxHiddenSheetsAndRows(t *testing.T) {
+	t.Parallel()
+	f := excelize.NewFile()
+	for i, row := range [][]any{{"ID", "Status"}, {"A-1", "Done"}, {"A-2", "Open"}, {"A-3", "Done"}} {
+		require.NoError(t, f.SetSheetRow("Sheet1", fmt.Sprintf("A%d", i+1), &row))
+	}
+	require.NoError(t, f.SetRowVisible("Sheet1", 3, false))
+	_, err := f.NewSheet("Archive")
+	require.NoError(t, err)
+	require.NoError(t, f.SetSheetRow("Archive", "A1", &[]any{"ID", "Note"}))
+	require.NoError(t, f.SetSheetVisible("Archive", false))
+	path := filepath.Join(t.TempDir(), "hidden.xlsx")
+	require.NoError(t, f.SaveAs(path))
+	require.NoError(t, f.Close())
+
+	out, err := runXlsx(t, "inspect", path)
+	require.NoError(t, err)
+	assert.Contains(t, out, `Sheet "Sheet1": used A1:B4, table Sheet1!A1:B4, header row 1, 3 rows, 1 hidden`)
+	assert.Contains(t, out, `Sheet "Archive" (hidden): used A1:B1, table Archive!A1:B1, header row 1, 0 rows`)
+
+	out, err = runXlsx(t, "read", path, "--skip-hidden", "--format", "json")
+	require.NoError(t, err)
+	var result workbook.ReadResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.Equal(t, 2, result.Count)
+	assert.Equal(t, "A-3", result.Rows[1]["ID"])
 }
 
 func TestXlsxReadJSONAndText(t *testing.T) {
@@ -142,6 +189,38 @@ func TestXlsxTextOutputReportsWriteErrors(t *testing.T) {
 		root.SetArgs(args)
 		require.ErrorContains(t, root.ExecuteContext(context.Background()), "stdout closed", "%v", args)
 	}
+}
+
+func TestXlsxProtectedWorkbook(t *testing.T) {
+	// The environment variable is process-wide, so this test stays sequential.
+	path := filepath.Join(t.TempDir(), "protected.xlsx")
+	f := excelize.NewFile()
+	require.NoError(t, f.SetCellValue("Sheet1", "A1", "Invoice No"))
+	require.NoError(t, f.SetCellValue("Sheet1", "A2", "INV-1"))
+	require.NoError(t, f.SaveAs(path, excelize.Options{Password: "secret"}))
+	require.NoError(t, f.Close())
+
+	const want = "protected.xlsx: workbook password is missing or incorrect"
+	t.Setenv("DAGU_XLSX_PASSWORD", "")
+	_, err := runXlsx(t, "inspect", path)
+	require.ErrorContains(t, err, want)
+	_, err = runXlsx(t, "read", path, "--password", "nope")
+	require.ErrorContains(t, err, want)
+
+	out, err := runXlsx(t, "inspect", path, "--password", "secret", "--format", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, "INV-1")
+
+	t.Setenv("DAGU_XLSX_PASSWORD", "secret")
+	out, err = runXlsx(t, "read", path, "--format", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, "INV-1")
+
+	// The flag wins, including when it is empty and the environment is set.
+	_, err = runXlsx(t, "read", path, "--password", "nope")
+	require.ErrorContains(t, err, want)
+	_, err = runXlsx(t, "inspect", path, "--password", "")
+	require.ErrorContains(t, err, want)
 }
 
 func TestXlsxErrors(t *testing.T) {

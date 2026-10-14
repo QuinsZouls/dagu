@@ -2878,6 +2878,18 @@
         },
         {
           "if": {
+            "properties": { "action": { "const": "js.run" } },
+            "required": ["action"]
+          },
+          "then": {
+            "required": ["with"],
+            "properties": {
+              "with": { "$ref": "#/definitions/jsRunActionConfig" }
+            }
+          }
+        },
+        {
+          "if": {
             "properties": { "action": { "const": "log.write" } },
             "required": ["action"]
           },
@@ -6544,13 +6556,13 @@
         },
         "effort": {
           "type": "string",
-          "enum": ["low", "medium", "high", "xhigh"],
-          "description": "Reasoning effort level. Maps to provider-specific settings: low (minimal reasoning), medium (default), high (thorough), xhigh (maximum, OpenAI GPT-5.2+ only)."
+          "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+          "description": "Reasoning effort level, from least to most: none, minimal, low, medium (default), high, xhigh, max. Each provider maps a level it does not support to its nearest supported one, so a fallback model on another provider still runs. 'none' turns thinking off where the provider allows it."
         },
         "budget_tokens": {
           "type": "integer",
           "minimum": 1,
-          "description": "Explicit token budget for thinking (provider-specific). Anthropic: 1024-128K, Gemini 2.5: 128-32768. Overrides effort-based defaults."
+          "description": "Explicit token budget for thinking (provider-specific). Anthropic: 1024-128K, for models without adaptive thinking such as Claude Haiku 4.5; current Claude models reject it. Gemini 2.5: 128-32768. Overrides effort."
         },
         "include_in_output": {
           "type": "boolean",
@@ -6666,6 +6678,7 @@
             "http.request",
             "human.task",
             "jq.filter",
+            "js.run",
             "k8s.run",
             "kubernetes.run",
             "log.write",
@@ -7172,6 +7185,40 @@
       },
       "description": "Configuration for action: jq.filter."
     },
+    "jsRunActionConfig": {
+      "type": "object",
+      "required": ["script"],
+      "not": {
+        "required": ["input", "input_file"]
+      },
+      "additionalProperties": false,
+      "properties": {
+        "script": {
+          "type": "string",
+          "minLength": 1,
+          "description": "JavaScript function body. The configured input is available as `input`; `return` a value to write it to stdout (strings as-is, other values as JSON). The text is used as written: Dagu does not resolve ${...} inside it, so pass workflow values through `input`."
+        },
+        "input": {
+          "description": "Value bound to `input`. Any YAML value; strings may use ${...} references. Mutually exclusive with input_file."
+        },
+        "input_file": {
+          "type": "string",
+          "description": "File whose contents are bound to `input`. Mutually exclusive with input."
+        },
+        "format": {
+          "type": "string",
+          "enum": ["auto", "text", "json"],
+          "default": "auto",
+          "description": "How string input is interpreted. auto parses a JSON object or array (such as a captured output from an earlier step) and binds any other string as-is; text always binds the string as-is; json always parses and fails on invalid JSON. Applies to input_file contents and to a string input."
+        },
+        "timeout": {
+          "type": ["integer", "string"],
+          "minimum": 1,
+          "description": "Maximum script run time in seconds, or a duration such as 2m. Defaults to the step timeout, or 60s when the step has none."
+        }
+      },
+      "description": "Configuration for action: js.run. The script may use await; promises settle only through the microtask queue, since there is no event loop. The sandbox exposes ECMAScript builtins, console (to stderr), URL, and URLSearchParams; it has no require, fetch, filesystem, or timers."
+    },
     "dataConvertActionConfig": {
       "type": "object",
       "required": ["from", "to"],
@@ -7565,9 +7612,57 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
           "description": "Persistent profile name. Cookies and storage are kept across runs; runs sharing a profile wait for each other."
+        },
+        "client_certificates": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/browserClientCertificate" },
+          "description": "TLS client certificates presented to the hosts each names, before those in the Dagu config. The first entry whose hosts match is used."
         }
       },
       "description": "Browser launch options."
+    },
+    "browserClientCertificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hosts"],
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Hosts the certificate is presented to: a host name or IP address, *.example.com for the subdomains of example.com, or * for every host."
+        },
+        "pfx_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "PKCS#12 (.pfx or .p12) file holding the certificate, its private key, and optionally its chain. Relative to the step's working directory."
+        },
+        "cert_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "PEM certificate, followed by its chain. Used with key_file instead of pfx_file."
+        },
+        "key_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unencrypted PEM private key for cert_file."
+        },
+        "ca_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "PEM certificates to trust for these hosts' servers, in addition to the system's."
+        },
+        "passphrase": {
+          "type": "string",
+          "description": "Passphrase of pfx_file. Reference a secret, such as ${env.CERT_PASSPHRASE}."
+        },
+        "passphrase_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File holding the passphrase of pfx_file."
+        }
+      },
+      "description": "A TLS client certificate and the hosts it is presented to."
     },
     "browserVariables": {
       "type": "object",
@@ -7777,10 +7872,11 @@
           "description": "Values referenced as %name% in act instructions. The model sees only the names; the values are typed for it."
         },
         "screenshots": { "$ref": "#/definitions/computerScreenshots" },
+        "ai": { "$ref": "#/definitions/computerAI" },
         "cache": {
           "type": "boolean",
           "default": true,
-          "description": "Record the act operations of a step that succeeds and replay them on later runs without a model call while the screens match."
+          "description": "Set false to ask the model every run, the same as ai: every_run. Set ai or cache, not both."
         },
         "max_actions": {
           "type": "integer",
@@ -7796,8 +7892,20 @@
         },
         "idle": {
           "type": "string",
-          "default": "15s",
+          "default": "5s",
           "description": "How long nobody may have used the desktop before the step sends input or launches an application, such as 30s. Actions the model chose on a screen a person has since used are not run. 0 turns this off."
+        },
+        "find_within": {
+          "type": "string",
+          "default": "10s",
+          "description": "How long a replayed action waits for its element, or a replayed turn for its screen, before it is a miss, such as 10s. 0 looks once. The wait counts toward the operation timeout."
+        },
+        "input": { "$ref": "#/definitions/computerInput" },
+        "max_rows": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000,
+          "description": "Most rows an extract reads from a table bound to a grid, table, or list. Defaults to 10000."
         },
         "llm": {
           "$ref": "#/definitions/standardLLMConfig",
@@ -7818,6 +7926,18 @@
       "default": "on_failure",
       "description": "Automatic screenshots stored as run artifacts, unmasked: on_failure only when the step fails, final also at the end of a successful step, each also after every operation, never none."
     },
+    "computerAI": {
+      "type": "string",
+      "enum": ["every_run", "on_miss", "never"],
+      "default": "on_miss",
+      "description": "How much the model decides: every_run asks it every run; on_miss replays the acts of a step that succeeded while the screens match and lets the model repair the recording from the first screen that differs; never replays only, fails the step when the screen differs or there is no recording, and needs no llm when nothing in the step can call the model."
+    },
+    "computerInput": {
+      "type": "string",
+      "enum": ["screen", "direct"],
+      "default": "screen",
+      "description": "How a replayed action reaches the application. screen sends the pointer and keys as the model did. direct has the element act itself through its automation pattern: a click invokes a button, toggles a checkbox, selects a list item, opens a combo box, or focuses a field, and a typing sets the field's value at once when the recording showed the typed text became the value. An element without the pattern replays that action on the screen. An application that reacts to each key or to the pointer alone sees nothing, so screen stays the default. Model turns always use the screen."
+    },
     "computerCondition": {
       "oneOf": [
         {
@@ -7828,20 +7948,171 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["statement"],
+          "oneOf": [
+            { "required": ["statement"] },
+            { "required": ["text"] },
+            { "required": ["element"] },
+            { "required": ["window"] }
+          ],
           "properties": {
             "statement": {
               "type": "string",
               "minLength": 1,
               "description": "Statement about the screen, judged by the model."
             },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Holds when the name or value of a visible element of the window in front contains this text. Read without a model."
+            },
+            "element": {
+              "$ref": "#/definitions/computerSelector",
+              "description": "Holds when this selector matches exactly one visible element of the window in front. Read without a model."
+            },
+            "window": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Holds when the title of the window in front contains this text; * matches any run of characters. Read without a model."
+            },
             "within": {
               "type": "string",
-              "description": "How long to keep rechecking a false statement, such as 30s."
+              "description": "How long to keep looking before deciding, such as 30s. A statement is judged once by default; an exact when reads once, and an exact expect keeps looking until the operation timeout."
             }
-          }
+          },
+          "description": "A statement the model judges, or an exact check that reads the window's elements without a model call, on 64-bit Windows."
         }
       ]
+    },
+    "computerPinnedStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["click"] },
+        { "required": ["double_click"] },
+        { "required": ["right_click"] },
+        { "required": ["type"] },
+        { "required": ["key"] },
+        { "required": ["scroll"] },
+        { "required": ["wait"] }
+      ],
+      "properties": {
+        "click": { "$ref": "#/definitions/computerSelector" },
+        "double_click": { "$ref": "#/definitions/computerSelector" },
+        "right_click": { "$ref": "#/definitions/computerSelector" },
+        "type": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["into", "text"],
+          "properties": {
+            "into": { "$ref": "#/definitions/computerSelector" },
+            "text": { "type": "string" }
+          }
+        },
+        "key": { "type": "string", "minLength": 1, "description": "A key chord such as ctrl+s." },
+        "scroll": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["on", "dy"],
+          "properties": {
+            "on": { "$ref": "#/definitions/computerSelector" },
+            "dy": { "type": "integer" }
+          }
+        },
+        "wait": { "type": "string", "minLength": 1, "description": "A time to pause, such as 1s." },
+        "focus": { "$ref": "#/definitions/computerSelector", "description": "With key: the element to focus before pressing the keys." }
+      },
+      "dependencies": { "focus": ["key"] },
+      "description": "One pinned step of an act: exactly one of click, double_click, right_click (a selector), type (into, text), key (a chord, with an optional focus), scroll (on, dy), or wait."
+    },
+    "computerPinnedField": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A pinned extract field: a selector for a scalar, or a container and columns for a table.",
+      "properties": {
+        "role": { "type": "string", "enum": ["button", "text_field", "text", "checkbox", "radio", "combo_box", "list_item", "menu_item", "tab", "link", "cell", "list", "group", "window", "other"] },
+        "name": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1 },
+        "app": { "type": "string", "minLength": 1 },
+        "window": { "type": "string", "minLength": 1 },
+        "in": { "$ref": "#/definitions/computerSelector" },
+        "near": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["label", "side"],
+          "properties": {
+            "label": { "type": "string", "minLength": 1 },
+            "side": { "type": "string", "enum": ["right", "below", "left", "above"] }
+          }
+        },
+        "nth": { "type": "integer", "minimum": 0 },
+        "container": { "$ref": "#/definitions/computerSelector" },
+        "columns": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "computerSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "anyOf": [
+        { "required": ["name"] },
+        { "required": ["id"] },
+        { "required": ["near"] }
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["button", "text_field", "text", "checkbox", "radio", "combo_box", "list_item", "menu_item", "tab", "link", "cell", "list", "group", "window", "other"],
+          "description": "The element's role."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The accessible name, exact; * matches any run of characters, and %name% placeholders are replaced from variables and ask answers."
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The identifier the application gives the element, such as the UI Automation AutomationId."
+        },
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The process image name without its extension, compared ignoring case."
+        },
+        "window": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Text the window title contains; * matches any run of characters."
+        },
+        "in": {
+          "$ref": "#/definitions/computerSelector",
+          "description": "A container the element sits in, such as a group; the search is narrowed to its descendants."
+        },
+        "near": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["label", "side"],
+          "properties": {
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The label the element sits next to."
+            },
+            "side": {
+              "type": "string",
+              "enum": ["right", "below", "left", "above"],
+              "description": "Which side of the label the element is on."
+            }
+          },
+          "description": "Keeps the element the application links to the label, or the nearest one on that side of it."
+        },
+        "nth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Which of several equal matches, in reading order, from 0."
+        }
+      },
+      "description": "Names an element: role with name, id, or near, narrowed by app, window, in, and nth. More than one match is a miss."
     },
     "computerOperation": {
       "type": "object",
@@ -7880,14 +8151,35 @@
               "required": ["instruction"],
               "properties": {
                 "instruction": { "type": "string", "minLength": 1 },
+                "ai": {
+                  "$ref": "#/definitions/computerAI",
+                  "description": "How much the model decides for this act, in place of with.ai."
+                },
                 "cache": {
                   "type": "boolean",
-                  "description": "Set false to disable the replay cache for this operation. Has no effect when with.cache is false."
+                  "description": "Set false to ask the model every run for this act, the same as ai: every_run. Set ai or cache, not both."
                 },
                 "max_actions": {
                   "type": "integer",
                   "minimum": 1,
                   "description": "Most desktop actions this act may take. Defaults to with.max_actions."
+                },
+                "find_within": {
+                  "type": "string",
+                  "description": "How long a replay of this act waits for an element or its screen, in place of with.find_within."
+                },
+                "input": {
+                  "$ref": "#/definitions/computerInput",
+                  "description": "How a replay of this act reaches the application, in place of with.input."
+                },
+                "recorded": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Pinned steps, keyed by system (windows or macos). A device of that system runs them first, ahead of its own recording, so a learned act travels across devices.",
+                  "properties": {
+                    "windows": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/computerPinnedStep" } },
+                    "macos": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/computerPinnedStep" } }
+                  }
                 }
               }
             }
@@ -7900,7 +8192,25 @@
           "required": ["instruction", "schema"],
           "properties": {
             "instruction": { "type": "string", "minLength": 1 },
-            "schema": { "$ref": "#/definitions/extractSchema" }
+            "ai": {
+              "$ref": "#/definitions/computerAI",
+              "description": "How much the model decides for this extract, in place of with.ai. every_run reads with the model every run; on_miss reads the bound elements and asks the model only when one is missing; never reads the bound elements with no model and fails when one is missing. A scalar field, or a table field that is an array of objects, binds to the window's elements on a successful run; a plain object or a free array needs the model."
+            },
+            "max_rows": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Most rows this extract reads from a table, in place of with.max_rows."
+            },
+            "schema": { "$ref": "#/definitions/extractSchema" },
+            "fields": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Pinned field bindings, keyed by system (windows or macos) then by output name, so a device reads them with no model even if it never learned them. A scalar field is a selector; a table field is a container selector and columns.",
+              "properties": {
+                "windows": { "type": "object", "additionalProperties": { "$ref": "#/definitions/computerPinnedField" } },
+                "macos": { "type": "object", "additionalProperties": { "$ref": "#/definitions/computerPinnedField" } }
+              }
+            }
           },
           "description": "Read structured data from the screen into step outputs."
         },
@@ -8035,6 +8345,10 @@
         "keep_empty_rows": {
           "oneOf": [{ "type": "boolean" }, { "type": "string" }],
           "description": "Keep trailing empty rows as rows of nulls."
+        },
+        "skip_hidden": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }],
+          "description": "Leave out rows hidden by a filter or by hand. Defaults to false: hidden rows are read."
         },
         "trim": {
           "oneOf": [{ "type": "boolean" }, { "type": "string" }],
